@@ -93,6 +93,16 @@ func (p *PullClosedExecutor) CleanUpPull(logger logging.SimpleLogging, repo mode
 		}
 	}
 
+	// Workflow hook jobs are keyed by the pull request alone, and its
+	// persisted job logs must go even when no pull status was recorded.
+	if p.LogStreamResourceCleaner != nil {
+		p.LogStreamResourceCleaner.CleanUp(jobs.PullInfo{
+			PullNum:      pull.Num,
+			Repo:         pull.BaseRepo.Name,
+			RepoFullName: pull.BaseRepo.FullName,
+		})
+	}
+
 	var workspaceErr error
 	if err := p.WorkingDir.Delete(logger, repo, pull); err != nil {
 		workspaceErr = fmt.Errorf("cleaning workspace: %w", err)

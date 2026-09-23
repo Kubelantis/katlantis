@@ -69,8 +69,7 @@ type AsyncProjectCommandOutputHandler struct {
 	logger logging.SimpleLogging
 
 	// logStore persists every output line as it is produced, independently
-	// of projectOutputBuffers, and serves jobs no longer (or never) held in
-	// this replica's memory.
+	// of projectOutputBuffers, and serves jobs no longer held in memory.
 	logStore logstore.LogStore
 
 	// Tracks all the jobs for a pull request which is used for clean up after a pull request is closed.
@@ -219,6 +218,8 @@ func (p *AsyncProjectCommandOutputHandler) Handle() {
 			JobStep:        msg.JobInfo.JobStep,
 		})
 
+		p.logStore.Write(logstore.Pull{RepoFullName: msg.JobInfo.RepoFullName, Num: msg.JobInfo.PullNum}, msg.JobID, msg.Line)
+
 		// Forward new message to all receiver channels and output buffer
 		p.writeLogLine(msg.JobID, msg.Line)
 	}
@@ -254,9 +255,8 @@ func (p *AsyncProjectCommandOutputHandler) addChan(ch chan string, jobID string)
 	outputBuffer, resident := p.projectOutputBuffers[jobID]
 	p.projectOutputBuffersLock.RUnlock()
 
-	// Not in this replica's memory: it restarted, the pull was cleaned up,
-	// or another replica ran the job. Replay whatever was persisted. A job
-	// with nothing persisted either has not produced output yet, so the
+	// Not in memory, e.g. after a restart: replay whatever was persisted. A
+	// job with nothing persisted has not produced output yet, so the
 	// receiver is registered for it below as before.
 	if !resident {
 		persisted, err := p.logStore.Exists(jobID)
@@ -317,8 +317,6 @@ func (p *AsyncProjectCommandOutputHandler) replayPersisted(ch chan string, jobID
 
 // Add log line to buffer and send to all current channels
 func (p *AsyncProjectCommandOutputHandler) writeLogLine(jobID string, line string) {
-	p.logStore.Write(jobID, line)
-
 	p.receiverBuffersLock.Lock()
 	for ch := range p.receiverBuffers[jobID] {
 		select {
@@ -377,6 +375,12 @@ func (p *AsyncProjectCommandOutputHandler) GetJobIDMapForPull(pullInfo PullInfo)
 }
 
 func (p *AsyncProjectCommandOutputHandler) CleanUp(pullInfo PullInfo) {
+	// Persisted logs are grouped per pull request, so this also covers jobs
+	// this replica no longer holds in memory, e.g. from before a restart.
+	if err := p.logStore.DeletePull(logstore.Pull{RepoFullName: pullInfo.RepoFullName, Num: pullInfo.PullNum}); err != nil {
+		p.logger.Warn("deleting persisted job logs for %s#%d: %s", pullInfo.RepoFullName, pullInfo.PullNum, err)
+	}
+
 	if value, ok := p.pullToJobMapping.Load(pullInfo); ok {
 		jobIDSyncMap := value.(*sync.Map)
 		jobIDSyncMap.Range(func(k, _ any) bool {

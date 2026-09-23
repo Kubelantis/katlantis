@@ -53,7 +53,7 @@ func createProjectCommandOutputHandler(t *testing.T) jobs.ProjectCommandOutputHa
 	prjCmdOutputHandler := jobs.NewAsyncProjectCommandOutputHandler(
 		prjCmdOutputChan,
 		logger,
-		logstore.LocalLogStore{},
+		logstore.NoopLogStore{},
 	)
 
 	go func() {
@@ -263,7 +263,7 @@ func TestProjectCommandOutputHandler(t *testing.T) {
 func TestRaceConditionPrevention(t *testing.T) {
 	logger := logging.NewNoopLogger(t)
 	prjCmdOutputChan := make(chan *jobs.ProjectCmdOutputLine)
-	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger, logstore.LocalLogStore{})
+	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger, logstore.NoopLogStore{})
 
 	// Start the handler
 	go handler.Handle()
@@ -362,7 +362,7 @@ func TestHighConcurrencyStress(t *testing.T) {
 
 	logger := logging.NewNoopLogger(t)
 	prjCmdOutputChan := make(chan *jobs.ProjectCmdOutputLine)
-	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger, logstore.LocalLogStore{})
+	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger, logstore.NoopLogStore{})
 
 	// Start the handler
 	go handler.Handle()

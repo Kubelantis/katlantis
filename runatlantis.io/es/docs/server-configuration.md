@@ -455,6 +455,11 @@ El valor predeterminado es `~/.atlantis`. Atlantis almacenará aquí su base de 
 Terraform descargados. Si Atlantis pierde este directorio, los [locks](locking.md)
 se perderán y los plans no aplicados se perderán.
 
+La salida de los jobs también se escribe aquí, en `job-logs/`, para que la
+página de un job siga mostrando su log después de que Atlantis se reinicie.
+Los logs de los jobs de un pull request se eliminan cuando se cierra o se
+fusiona.
+
 Tenga en cuenta que el usuario atlantis está restringido a `~/.atlantis`.
 Si establece el flag `--data-dir` en una ruta fuera del directorio home de Atlantis, asegúrese de otorgar al usuario atlantis los permisos correctos.
 

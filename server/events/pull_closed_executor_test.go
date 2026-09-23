@@ -243,7 +243,7 @@ func TestCleanUpLogStreaming(t *testing.T) {
 
 		// Create Log streaming resources
 		prjCmdOutput := make(chan *jobs.ProjectCmdOutputLine)
-		prjCmdOutHandler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutput, logger, logstore.LocalLogStore{})
+		prjCmdOutHandler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutput, logger, logstore.NoopLogStore{})
 		ctx := command.ProjectContext{
 			BaseRepo:    testdata.GithubRepo,
 			Pull:        testdata.Pull,
@@ -387,11 +387,12 @@ func TestCleanUpPullWithCorrectJobContext(t *testing.T) {
 	err = pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
 	Ok(t, err)
 
-	// Verify ResourceCleaner.CleanUp was called twice (once for each project)
-	resourceCleaner.VerifyWasCalled(Times(2)).CleanUp(Any[jobs.PullInfo]())
+	// Verify ResourceCleaner.CleanUp was called once for each project, then
+	// once for the pull request as a whole.
+	resourceCleaner.VerifyWasCalled(Times(3)).CleanUp(Any[jobs.PullInfo]())
 
 	// Get the captured arguments to verify they contain all required fields
-	capturedArgs := resourceCleaner.VerifyWasCalled(Times(2)).CleanUp(Any[jobs.PullInfo]()).GetAllCapturedArguments()
+	capturedArgs := resourceCleaner.VerifyWasCalled(Times(3)).CleanUp(Any[jobs.PullInfo]()).GetAllCapturedArguments()
 
 	// Verify first project's PullInfo
 	expectedPullInfo1 := jobs.PullInfo{
@@ -414,6 +415,13 @@ func TestCleanUpPullWithCorrectJobContext(t *testing.T) {
 		Workspace:    "staging",
 	}
 	Equals(t, expectedPullInfo2, capturedArgs[1])
+
+	// And the pull-level call, which covers workflow hook jobs.
+	Equals(t, jobs.PullInfo{
+		PullNum:      testdata.Pull.Num,
+		Repo:         testdata.Pull.BaseRepo.Name,
+		RepoFullName: testdata.Pull.BaseRepo.FullName,
+	}, capturedArgs[2])
 }
 
 type countingPlanStore struct {

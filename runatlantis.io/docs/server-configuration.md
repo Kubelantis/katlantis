@@ -456,6 +456,10 @@ Defaults to `~/.atlantis`. Atlantis will store its database, checked out repos, 
 Terraform binaries here. If Atlantis loses this directory, [locks](locking.md)
 will be lost and unapplied plans will be lost.
 
+Job output is also written here, under `job-logs/`, so a job's page still
+shows its log after Atlantis restarts. A pull request's job logs are deleted
+when it is closed or merged.
+
 Note that the atlantis user is restricted to `~/.atlantis`.
 If you set the `--data-dir` flag to a path outside of Atlantis its home directory, ensure that you grant the atlantis user the correct permissions.
 

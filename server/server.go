@@ -441,16 +441,19 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		Underlying:                underlyingRouter,
 	}
 
-	// Job output is kept in memory only; LogStore is the seam an external
-	// store plugs into later.
-	var logStore logstore.LogStore = logstore.LocalLogStore{}
-
+	var logStore logstore.LogStore = logstore.NoopLogStore{}
 	var projectCmdOutputHandler jobs.ProjectCommandOutputHandler
 
 	if userConfig.TFEToken != "" && !userConfig.TFELocalExecutionMode {
 		// When TFE is enabled and using remote execution mode log streaming is not necessary.
 		projectCmdOutputHandler = &jobs.NoopProjectOutputHandler{}
 	} else {
+		// Job logs outlive a restart on disk until their pull request closes.
+		fileLogStore, err := logstore.NewFileLogStore(filepath.Join(userConfig.DataDir, logstore.DirName), logger)
+		if err != nil {
+			return nil, err
+		}
+		logStore = fileLogStore
 		projectCmdOutput := make(chan *jobs.ProjectCmdOutputLine)
 		projectCmdOutputHandler = jobs.NewAsyncProjectCommandOutputHandler(
 			projectCmdOutput,
@@ -1300,7 +1303,7 @@ func (s *Server) Start() error {
 	s.Logger.Warn("Received interrupt. Waiting for in-progress operations to complete")
 	s.waitForDrain()
 
-	// Final flush of any job output the log store still buffers.
+	// Close the log files of jobs cut short by the shutdown.
 	if s.logStore != nil {
 		if err := s.logStore.Close(); err != nil {
 			s.Logger.Err("closing job log store: %s", err)
