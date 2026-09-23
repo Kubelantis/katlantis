@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/jobs"
@@ -52,6 +53,7 @@ func createProjectCommandOutputHandler(t *testing.T) jobs.ProjectCommandOutputHa
 	prjCmdOutputHandler := jobs.NewAsyncProjectCommandOutputHandler(
 		prjCmdOutputChan,
 		logger,
+		logstore.LocalLogStore{},
 	)
 
 	go func() {
@@ -261,7 +263,7 @@ func TestProjectCommandOutputHandler(t *testing.T) {
 func TestRaceConditionPrevention(t *testing.T) {
 	logger := logging.NewNoopLogger(t)
 	prjCmdOutputChan := make(chan *jobs.ProjectCmdOutputLine)
-	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger)
+	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger, logstore.LocalLogStore{})
 
 	// Start the handler
 	go handler.Handle()
@@ -360,7 +362,7 @@ func TestHighConcurrencyStress(t *testing.T) {
 
 	logger := logging.NewNoopLogger(t)
 	prjCmdOutputChan := make(chan *jobs.ProjectCmdOutputLine)
-	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger)
+	handler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutputChan, logger, logstore.LocalLogStore{})
 
 	// Start the handler
 	go handler.Handle()

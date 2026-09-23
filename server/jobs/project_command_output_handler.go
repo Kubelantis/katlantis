@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/logging"
@@ -67,6 +68,11 @@ type AsyncProjectCommandOutputHandler struct {
 
 	logger logging.SimpleLogging
 
+	// logStore persists every output line as it is produced, independently
+	// of projectOutputBuffers, and serves jobs no longer (or never) held in
+	// this replica's memory.
+	logStore logstore.LogStore
+
 	// Tracks all the jobs for a pull request which is used for clean up after a pull request is closed.
 	pullToJobMapping sync.Map
 }
@@ -101,10 +107,12 @@ type ProjectCommandOutputHandler interface {
 func NewAsyncProjectCommandOutputHandler(
 	projectCmdOutput chan *ProjectCmdOutputLine,
 	logger logging.SimpleLogging,
+	logStore logstore.LogStore,
 ) ProjectCommandOutputHandler {
 	return &AsyncProjectCommandOutputHandler{
 		projectCmdOutput:     projectCmdOutput,
 		logger:               logger,
+		logStore:             logStore,
 		receiverBuffers:      map[string]map[chan string]bool{},
 		projectOutputBuffers: map[string]OutputBuffer{},
 		pullToJobMapping:     sync.Map{},
@@ -136,9 +144,17 @@ func (p *AsyncProjectCommandOutputHandler) GetPullToJobMapping() []PullInfoWithJ
 
 func (p *AsyncProjectCommandOutputHandler) IsKeyExists(key string) bool {
 	p.projectOutputBuffersLock.RLock()
-	defer p.projectOutputBuffersLock.RUnlock()
 	_, ok := p.projectOutputBuffers[key]
-	return ok
+	p.projectOutputBuffersLock.RUnlock()
+	if ok {
+		return true
+	}
+	persisted, err := p.logStore.Exists(key)
+	if err != nil {
+		p.logger.Warn("checking job log store for %s: %s", key, err)
+		return false
+	}
+	return persisted
 }
 
 func (p *AsyncProjectCommandOutputHandler) Send(ctx command.ProjectContext, msg string, operationComplete bool) {
@@ -209,6 +225,8 @@ func (p *AsyncProjectCommandOutputHandler) Handle() {
 }
 
 func (p *AsyncProjectCommandOutputHandler) completeJob(jobID string) {
+	p.logStore.Complete(jobID)
+
 	p.projectOutputBuffersLock.Lock()
 	p.receiverBuffersLock.Lock()
 	defer func() {
@@ -233,8 +251,23 @@ func (p *AsyncProjectCommandOutputHandler) completeJob(jobID string) {
 
 func (p *AsyncProjectCommandOutputHandler) addChan(ch chan string, jobID string) {
 	p.projectOutputBuffersLock.RLock()
-	outputBuffer := p.projectOutputBuffers[jobID]
+	outputBuffer, resident := p.projectOutputBuffers[jobID]
 	p.projectOutputBuffersLock.RUnlock()
+
+	// Not in this replica's memory: it restarted, the pull was cleaned up,
+	// or another replica ran the job. Replay whatever was persisted. A job
+	// with nothing persisted either has not produced output yet, so the
+	// receiver is registered for it below as before.
+	if !resident {
+		persisted, err := p.logStore.Exists(jobID)
+		if err != nil {
+			p.logger.Warn("checking job log store for %s: %s", jobID, err)
+		}
+		if persisted {
+			p.replayPersisted(ch, jobID)
+			return
+		}
+	}
 
 	for _, line := range outputBuffer.Buffer {
 		ch <- line
@@ -256,8 +289,36 @@ func (p *AsyncProjectCommandOutputHandler) addChan(ch chan string, jobID string)
 	p.receiverBuffersLock.Unlock()
 }
 
+// replaySendTimeout bounds how long a replay waits on a viewer that stopped
+// reading, e.g. one whose websocket closed mid-replay.
+const replaySendTimeout = 10 * time.Second
+
+func (p *AsyncProjectCommandOutputHandler) replayPersisted(ch chan string, jobID string) {
+	defer close(ch)
+	err := p.logStore.Replay(jobID, func(line string) bool {
+		select {
+		case ch <- line:
+			return true
+		default:
+		}
+		timer := time.NewTimer(replaySendTimeout)
+		defer timer.Stop()
+		select {
+		case ch <- line:
+			return true
+		case <-timer.C:
+			return false
+		}
+	})
+	if err != nil {
+		p.logger.Err("replaying persisted output for job %s: %s", jobID, err)
+	}
+}
+
 // Add log line to buffer and send to all current channels
 func (p *AsyncProjectCommandOutputHandler) writeLogLine(jobID string, line string) {
+	p.logStore.Write(jobID, line)
+
 	p.receiverBuffersLock.Lock()
 	for ch := range p.receiverBuffers[jobID] {
 		select {

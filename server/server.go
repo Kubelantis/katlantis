@@ -39,6 +39,7 @@ import (
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/drift"
+	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/core/redis"
 	"github.com/runatlantis/atlantis/server/core/terraform/tfclient"
 	"github.com/runatlantis/atlantis/server/jobs"
@@ -128,6 +129,7 @@ type Server struct {
 	DisableGlobalApplyLock         bool
 	EnableProfilingAPI             bool
 	database                       db.Database
+	logStore                       logstore.LogStore
 }
 
 // Config holds config for server that isn't passed in by the user.
@@ -439,6 +441,10 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		Underlying:                underlyingRouter,
 	}
 
+	// Job output is kept in memory only; LogStore is the seam an external
+	// store plugs into later.
+	var logStore logstore.LogStore = logstore.LocalLogStore{}
+
 	var projectCmdOutputHandler jobs.ProjectCommandOutputHandler
 
 	if userConfig.TFEToken != "" && !userConfig.TFELocalExecutionMode {
@@ -449,6 +455,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		projectCmdOutputHandler = jobs.NewAsyncProjectCommandOutputHandler(
 			projectCmdOutput,
 			logger,
+			logStore,
 		)
 	}
 
@@ -1184,6 +1191,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		ScheduledExecutorService:       scheduledExecutorService,
 		EnableProfilingAPI:             userConfig.EnableProfilingAPI,
 		database:                       database,
+		logStore:                       logStore,
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
@@ -1291,6 +1299,13 @@ func (s *Server) Start() error {
 
 	s.Logger.Warn("Received interrupt. Waiting for in-progress operations to complete")
 	s.waitForDrain()
+
+	// Final flush of any job output the log store still buffers.
+	if s.logStore != nil {
+		if err := s.logStore.Close(); err != nil {
+			s.Logger.Err("closing job log store: %s", err)
+		}
+	}
 
 	// flush stats before shutdown
 	if err := s.StatsCloser.Close(); err != nil {

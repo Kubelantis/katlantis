@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/logging"
 	"github.com/stretchr/testify/assert"
@@ -242,7 +243,7 @@ func TestCleanUpLogStreaming(t *testing.T) {
 
 		// Create Log streaming resources
 		prjCmdOutput := make(chan *jobs.ProjectCmdOutputLine)
-		prjCmdOutHandler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutput, logger)
+		prjCmdOutHandler := jobs.NewAsyncProjectCommandOutputHandler(prjCmdOutput, logger, logstore.LocalLogStore{})
 		ctx := command.ProjectContext{
 			BaseRepo:    testdata.GithubRepo,
 			Pull:        testdata.Pull,
