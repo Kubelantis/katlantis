@@ -441,7 +441,7 @@ var stringFlags = map[string]stringFlag{
 		defaultValue: "",
 	},
 	JobLogDirFlag: {
-		description: "Path to directory to persist job output in, so job logs survive a restart. Point it at a shared mount (e.g. EFS or NFS) to keep logs off the data dir." +
+		description: "Path to directory to persist job output in, so job logs survive a restart. With multiple replicas, point every replica at the same shared or network volume (e.g. NFS, EFS, or an S3 bucket mounted with append support)." +
 			" If unset, defaults to the '" + logstore.DirName + "' subdirectory of --" + DataDirFlag + ".",
 		defaultValue: "",
 	},

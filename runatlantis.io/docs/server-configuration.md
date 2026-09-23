@@ -1116,10 +1116,18 @@ log after Atlantis restarts. Defaults to the `job-logs` subdirectory of
 `--data-dir`. A pull request's job logs are deleted when it is closed or
 merged.
 
-Point this at a shared mount, such as EFS or NFS, to keep job logs off the
-data dir. If every replica uses the same directory, each can show logs of
-jobs another replica ran. The filesystem must support appending to a file;
-S3 FUSE mounts such as Mountpoint for Amazon S3 generally do not.
+When running multiple Atlantis replicas, point every replica at the same
+shared or network volume (for example NFS, Amazon EFS, Azure Files, or an S3
+bucket mounted as a filesystem). Any replica can then show the log of a job
+another replica ran, and closing a pull request deletes its logs for all of
+them. Without a shared volume, each replica only has the logs of the jobs it
+ran itself. Following a job's output live still works only on the replica
+running it; other replicas show what has been written so far.
+
+The volume must support appending to an existing file, because each line is
+written as it is produced. NFS, EFS and Azure Files do. For S3, use a mount
+that supports appends, such as s3fs; Mountpoint for Amazon S3 does not
+support appending to files in general-purpose buckets.
 
 ### `--language` <Badge text="v0.45.0+" type="info"/>
 
