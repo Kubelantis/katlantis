@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/runatlantis/atlantis/server"
+	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/events/vcs/bitbucketcloud"
 	"github.com/runatlantis/atlantis/server/i18n"
 	"github.com/runatlantis/atlantis/server/logging"
@@ -120,6 +121,7 @@ const (
 	MaxCommentsPerCommand            = "max-comments-per-command"
 	ParallelPoolSize                 = "parallel-pool-size"
 	SharePlanDirFlag                 = "share-plan-dir"
+	JobLogDirFlag                    = "job-log-dir"
 	PendingApplyStatusFlag           = "pending-apply-status"
 	StatsNamespace                   = "stats-namespace"
 	AllowDraftPRs                    = "allow-draft-prs"
@@ -436,6 +438,11 @@ var stringFlags = map[string]stringFlag{
 	},
 	SharePlanDirFlag: {
 		description:  "Path to directory to store local Terraform plan files. If unset, defaults to --" + DataDirFlag + ".",
+		defaultValue: "",
+	},
+	JobLogDirFlag: {
+		description: "Path to directory to persist job output in, so job logs survive a restart. Point it at a shared mount (e.g. EFS or NFS) to keep logs off the data dir." +
+			" If unset, defaults to the '" + logstore.DirName + "' subdirectory of --" + DataDirFlag + ".",
 		defaultValue: "",
 	},
 	RedisHost: {
@@ -945,6 +952,9 @@ func (s *ServerCmd) run() error {
 	if err := s.setSharePlanDir(&userConfig); err != nil {
 		return err
 	}
+	if err := s.setJobLogDir(&userConfig); err != nil {
+		return err
+	}
 	if err := s.setMarkdownTemplateOverridesDir(&userConfig); err != nil {
 		return err
 	}
@@ -1261,21 +1271,43 @@ func (s *ServerCmd) setSharePlanDir(userConfig *server.UserConfig) error {
 		return nil
 	}
 
-	finalPath := userConfig.SharePlanDir
-	if strings.HasPrefix(finalPath, "~/") {
-		var err error
-		finalPath, err = homedir.Expand(finalPath)
-		if err != nil {
-			return fmt.Errorf("determining home directory: %w", err)
-		}
-	}
-
-	finalPath, err := filepath.Abs(finalPath)
+	finalPath, err := absDir(userConfig.SharePlanDir, SharePlanDirFlag)
 	if err != nil {
-		return fmt.Errorf("making share-plan-dir absolute: %w", err)
+		return err
 	}
 	userConfig.SharePlanDir = finalPath
 	return nil
+}
+
+// setJobLogDir expands ~ and makes job-log-dir absolute. If unset it defaults
+// to the job-logs subdirectory of the resolved data-dir.
+func (s *ServerCmd) setJobLogDir(userConfig *server.UserConfig) error {
+	if userConfig.JobLogDir == "" {
+		userConfig.JobLogDir = filepath.Join(userConfig.DataDir, logstore.DirName)
+		return nil
+	}
+	finalPath, err := absDir(userConfig.JobLogDir, JobLogDirFlag)
+	if err != nil {
+		return err
+	}
+	userConfig.JobLogDir = finalPath
+	return nil
+}
+
+// absDir expands a leading ~/ in path and makes it absolute.
+func absDir(path, flag string) (string, error) {
+	if strings.HasPrefix(path, "~/") {
+		var err error
+		path, err = homedir.Expand(path)
+		if err != nil {
+			return "", fmt.Errorf("determining home directory: %w", err)
+		}
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("making %s absolute: %w", flag, err)
+	}
+	return abs, nil
 }
 
 // setMarkdownTemplateOverridesDir checks if ~ was used in markdown-template-overrides-dir and converts it to the actual

@@ -41,6 +41,7 @@ type UserConfig struct {
 	CheckoutStrategy            string `mapstructure:"checkout-strategy"`
 	DataDir                     string `mapstructure:"data-dir"`
 	SharePlanDir                string `mapstructure:"share-plan-dir"`
+	JobLogDir                   string `mapstructure:"job-log-dir"`
 	DisableApplyAll             bool   `mapstructure:"disable-apply-all"`
 	DisableAutoplan             bool   `mapstructure:"disable-autoplan"`
 	DisableAutoplanLabel        string `mapstructure:"disable-autoplan-label"`

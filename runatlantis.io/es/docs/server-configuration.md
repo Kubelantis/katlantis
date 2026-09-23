@@ -455,10 +455,8 @@ El valor predeterminado es `~/.atlantis`. Atlantis almacenará aquí su base de 
 Terraform descargados. Si Atlantis pierde este directorio, los [locks](locking.md)
 se perderán y los plans no aplicados se perderán.
 
-La salida de los jobs también se escribe aquí, en `job-logs/`, para que la
-página de un job siga mostrando su log después de que Atlantis se reinicie.
-Los logs de los jobs de un pull request se eliminan cuando se cierra o se
-fusiona.
+La salida de los jobs también se escribe aquí, en `job-logs/`, a menos que
+se configure [`--job-log-dir`](#job-log-dir).
 
 Tenga en cuenta que el usuario atlantis está restringido a `~/.atlantis`.
 Si establece el flag `--data-dir` en una ruta fuera del directorio home de Atlantis, asegúrese de otorgar al usuario atlantis los permisos correctos.
@@ -1103,6 +1101,27 @@ ATLANTIS_INCLUDE_GIT_UNTRACKED_FILES=true
 Incluir archivos untracked de git en la lista de archivos modificados de Atlantis.
 Se usa por ejemplo con hooks pre-workflow de [CDK Terrain](custom-workflows.md#cdk-terrain-cdktn) que
 generan dinámicamente archivos Terraform.
+
+### `--job-log-dir`
+
+```bash
+atlantis server --job-log-dir="/mnt/efs/atlantis/job-logs"
+# or
+ATLANTIS_JOB_LOG_DIR="/mnt/efs/atlantis/job-logs"
+```
+
+Directorio en el que Atlantis persiste la salida de los jobs, para que la
+página de un job siga mostrando su log después de que Atlantis se reinicie.
+El valor predeterminado es el subdirectorio `job-logs` de `--data-dir`. Los
+logs de los jobs de un pull request se eliminan cuando se cierra o se
+fusiona.
+
+Apúntelo a un montaje compartido, como EFS o NFS, para mantener los logs de
+los jobs fuera del directorio de datos. Si todas las réplicas usan el mismo
+directorio, cada una puede mostrar los logs de los jobs que ejecutó otra
+réplica. El sistema de archivos debe admitir añadir datos a un archivo; los
+montajes FUSE de S3, como Mountpoint for Amazon S3, por lo general no lo
+admiten.
 
 ### `--language` <Badge text="v0.45.0+" type="info"/>
 

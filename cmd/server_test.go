@@ -109,6 +109,7 @@ var testFlags = map[string]any{
 	HideUnchangedPlanComments:        false,
 	HidePrevPlanComments:             false,
 	IncludeGitUntrackedFiles:         false,
+	JobLogDirFlag:                    "/job-logs",
 	LanguageFlag:                     "es",
 	LanguageConfigFileFlag:           "",
 	LockingDBType:                    "boltdb",
@@ -203,6 +204,7 @@ func TestExecute_Defaults(t *testing.T) {
 		DataDirFlag:                      dataDir,
 		MarkdownTemplateOverridesDirFlag: markdownTemplateOverridesDir,
 		SharePlanDirFlag:                 dataDir,
+		JobLogDirFlag:                    filepath.Join(dataDir, "job-logs"),
 		AtlantisURLFlag:                  "http://" + hostname + ":4141",
 		RepoAllowlistFlag:                "*",
 		VarFileAllowlistFlag:             dataDir,
@@ -297,6 +299,7 @@ var pathFlags = map[string]struct{}{
 	DataDirFlag:                      {},
 	MarkdownTemplateOverridesDirFlag: {},
 	SharePlanDirFlag:                 {},
+	JobLogDirFlag:                    {},
 }
 
 func TestExecute_Flags(t *testing.T) {
@@ -468,6 +471,39 @@ func TestExecute_ExpandHomeInSharePlanDir(t *testing.T) {
 	home, err := homedir.Dir()
 	Ok(t, err)
 	Equals(t, home+"/this/is/a/path", passedConfig.SharePlanDir)
+}
+
+func TestExecute_ExpandHomeInJobLogDir(t *testing.T) {
+	c := setup(map[string]any{
+		GHUserFlag:        "user",
+		GHTokenFlag:       "token",
+		RepoAllowlistFlag: "*",
+		JobLogDirFlag:     "~/mnt/efs/job-logs",
+	}, t)
+	Ok(t, c.Execute())
+
+	home, err := homedir.Dir()
+	Ok(t, err)
+	Equals(t, home+"/mnt/efs/job-logs", passedConfig.JobLogDir)
+}
+
+func TestExecute_RelativeJobLogDir(t *testing.T) {
+	c := setupWithDefaults(map[string]any{
+		JobLogDirFlag: "../",
+	}, t)
+
+	expectedAbsolutePath, err := filepath.Abs("../")
+	Ok(t, err)
+	Ok(t, c.Execute())
+	Equals(t, expectedAbsolutePath, passedConfig.JobLogDir)
+}
+
+func TestExecute_JobLogDirDefaultsUnderDataDir(t *testing.T) {
+	c := setupWithDefaults(map[string]any{
+		DataDirFlag: "/var/atlantis",
+	}, t)
+	Ok(t, c.Execute())
+	Equals(t, "/var/atlantis/job-logs", passedConfig.JobLogDir)
 }
 
 func TestExecute_RelativeSharePlanDir(t *testing.T) {

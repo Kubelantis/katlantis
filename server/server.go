@@ -449,7 +449,11 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		projectCmdOutputHandler = &jobs.NoopProjectOutputHandler{}
 	} else {
 		// Job logs outlive a restart on disk until their pull request closes.
-		fileLogStore, err := logstore.NewFileLogStore(filepath.Join(userConfig.DataDir, logstore.DirName), logger)
+		jobLogDir := userConfig.JobLogDir
+		if jobLogDir == "" {
+			jobLogDir = filepath.Join(userConfig.DataDir, logstore.DirName)
+		}
+		fileLogStore, err := logstore.NewFileLogStore(jobLogDir, logger)
 		if err != nil {
 			return nil, err
 		}
