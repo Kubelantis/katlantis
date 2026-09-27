@@ -453,7 +453,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		if jobLogDir == "" {
 			jobLogDir = filepath.Join(userConfig.DataDir, logstore.DirName)
 		}
-		fileLogStore, err := logstore.NewFileLogStore(jobLogDir, logger)
+		fileLogStore, err := logstore.NewFileLogStore(jobLogDir, logstore.DefaultFlushInterval, logger)
 		if err != nil {
 			return nil, err
 		}

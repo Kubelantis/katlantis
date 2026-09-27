@@ -1116,6 +1116,11 @@ El valor predeterminado es el subdirectorio `job-logs` de `--data-dir`. Los
 logs de los jobs de un pull request se eliminan cuando se cierra o se
 fusiona.
 
+La salida se guarda en memoria y se añade al archivo del job cada par de
+segundos, y una vez más cuando el job termina, de modo que un volumen lento
+nunca retrasa la salida en vivo. Si Atlantis se detiene de forma abrupta a
+mitad de un job, se pierden como máximo los últimos segundos de su salida.
+
 Al ejecutar varias réplicas de Atlantis, apunte todas las réplicas al mismo
 volumen compartido o de red (por ejemplo NFS, Amazon EFS, Azure Files o un
 bucket de S3 montado como sistema de archivos). Así, cualquier réplica puede
@@ -1123,10 +1128,12 @@ mostrar el log de un job que ejecutó otra réplica, y cerrar un pull request
 elimina sus logs para todas ellas. Sin un volumen compartido, cada réplica
 solo tiene los logs de los jobs que ejecutó ella misma. Seguir en vivo la
 salida de un job sigue funcionando solo en la réplica que lo ejecuta; las
-demás réplicas muestran lo que se ha escrito hasta el momento.
+demás réplicas muestran su salida hasta el último volcado, un par de segundos
+por detrás.
 
-El volumen debe admitir añadir datos a un archivo existente, porque cada línea
-se escribe a medida que se produce. NFS, EFS y Azure Files lo admiten. Para
+El volumen debe admitir añadir datos a un archivo existente, porque la salida
+se añade al archivo del job mientras este se ejecuta. NFS, EFS y Azure Files
+lo admiten. Para
 S3, use un montaje que admita añadir datos, como s3fs; Mountpoint for Amazon
 S3 no admite añadir datos a archivos en buckets de uso general.
 

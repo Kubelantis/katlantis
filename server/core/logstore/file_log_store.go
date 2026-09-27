@@ -5,6 +5,7 @@ package logstore
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -14,39 +15,91 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/runatlantis/atlantis/server/logging"
 )
 
-// DirName is the directory under the data dir that FileLogStore writes to.
-const DirName = "job-logs"
+const (
+	// DirName is the directory under the data dir that FileLogStore writes to
+	// by default.
+	DirName = "job-logs"
+
+	// DefaultFlushInterval bounds how far a job's file lags its output: on a
+	// crash, or for a viewer on another replica sharing the directory.
+	DefaultFlushInterval = 2 * time.Second
+
+	// flushBytes triggers a flush ahead of the interval once a job has this
+	// much output buffered, so a noisy job neither waits a full interval nor
+	// holds much in memory.
+	flushBytes = 256 << 10
+
+	// maxPendingBytes caps what is buffered for one job while writes to its
+	// file keep failing. Past it, lines are counted instead of kept, and a
+	// marker recording how many were dropped is written once writes succeed.
+	maxPendingBytes = 16 << 20
+
+	// maxCompleteFlushAttempts bounds retries for a finished job, so a
+	// permanently failing volume cannot hold its output in memory forever.
+	maxCompleteFlushAttempts = 10
+)
 
 // FileLogStore persists job output as plain-text files on local disk, laid
 // out as <root>/<escaped repo full name>/<pull num>/<job id>.log. Grouping by
 // pull request lets DeletePull drop a closed pull request's logs in one step,
 // even after a restart has emptied the output handler's memory.
+//
+// Write and Complete never touch the filesystem. Output is buffered per job
+// and appended to its file by a background flusher every flush interval, so
+// a slow volume (such as a network mount) never stalls the goroutine that
+// fans output out to live viewers. At most one interval of output is lost if
+// the process dies.
 type FileLogStore struct {
 	root   string
 	logger logging.SimpleLogging
 
-	mu   sync.Mutex
-	open map[string]*openLog
+	mu     sync.Mutex
+	jobs   map[string]*pendingLog
+	closed bool
+
+	// flushMu serializes file I/O: flushes, DeletePull and Close. It is always
+	// taken before mu, never while holding it.
+	flushMu sync.Mutex
+
+	kick      chan struct{}
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
-// openLog is the file of a job that is still producing output.
-type openLog struct {
-	f      *os.File
-	pull   Pull
-	failed bool
+// pendingLog is a job's output not yet appended to its file.
+type pendingLog struct {
+	pull     Pull
+	buf      bytes.Buffer
+	dropped  int
+	complete bool
+	failures int
+
+	// f is only used by the flusher, under flushMu.
+	f *os.File
 }
 
 // NewFileLogStore returns a FileLogStore rooted at root, creating it if
-// needed.
-func NewFileLogStore(root string, logger logging.SimpleLogging) (*FileLogStore, error) {
+// needed, that flushes buffered output every flushInterval until Close.
+func NewFileLogStore(root string, flushInterval time.Duration, logger logging.SimpleLogging) (*FileLogStore, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("creating job log dir %q: %w", root, err)
 	}
-	return &FileLogStore{root: root, logger: logger, open: map[string]*openLog{}}, nil
+	s := &FileLogStore{
+		root:   root,
+		logger: logger,
+		jobs:   map[string]*pendingLog{},
+		kick:   make(chan struct{}, 1),
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
+	}
+	go s.run(flushInterval)
+	return s, nil
 }
 
 func (s *FileLogStore) Write(pull Pull, jobID, line string) {
@@ -54,57 +107,48 @@ func (s *FileLogStore) Write(pull Pull, jobID, line string) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	l, ok := s.open[jobID]
+	p, ok := s.jobs[jobID]
 	if !ok {
-		l = &openLog{pull: pull}
-		s.open[jobID] = l
-		f, err := s.create(pull, jobID)
-		if err != nil {
-			s.logger.Warn("job log store: persisting output for job %s: %s", jobID, err)
-			l.failed = true
-		}
-		l.f = f
+		p = &pendingLog{pull: pull}
+		s.jobs[jobID] = p
 	}
-	if l.failed {
+	if p.buf.Len()+len(line)+1 > maxPendingBytes {
+		if p.dropped == 0 {
+			s.logger.Warn("job log store: buffer for job %s is full; dropping output until its log file accepts writes again", jobID)
+		}
+		p.dropped++
+		s.mu.Unlock()
 		return
 	}
-	if _, err := l.f.WriteString(line + "\n"); err != nil {
-		s.logger.Warn("job log store: persisting output for job %s: %s", jobID, err)
-		l.failed = true
-	}
-}
+	p.buf.WriteString(line)
+	p.buf.WriteByte('\n')
+	full := p.buf.Len() >= flushBytes
+	s.mu.Unlock()
 
-func (s *FileLogStore) create(pull Pull, jobID string) (*os.File, error) {
-	dir, err := s.pullDir(pull)
-	if err != nil {
-		return nil, err
+	if full {
+		s.signal()
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	// #nosec G304 -- dir is built from an escaped repo name and a pull number, and jobID is validated by ValidJobID.
-	return os.OpenFile(filepath.Join(dir, jobID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
 func (s *FileLogStore) Complete(jobID string) {
 	s.mu.Lock()
-	l, ok := s.open[jobID]
-	delete(s.open, jobID)
-	s.mu.Unlock()
+	p, ok := s.jobs[jobID]
 	if ok {
-		s.closeLog(jobID, l)
+		p.complete = true
 	}
-}
-
-func (s *FileLogStore) closeLog(jobID string, l *openLog) {
-	if l.f == nil {
+	closed := s.closed
+	s.mu.Unlock()
+	if !ok {
 		return
 	}
-	if err := errors.Join(l.f.Sync(), l.f.Close()); err != nil {
-		s.logger.Warn("job log store: closing output for job %s: %s", jobID, err)
+	// After Close the background flusher is gone, so flush inline instead.
+	if closed {
+		s.flushMu.Lock()
+		s.flushJob(jobID)
+		s.flushMu.Unlock()
+		return
 	}
+	s.signal()
 }
 
 func (s *FileLogStore) Exists(jobID string) (bool, error) {
@@ -148,14 +192,25 @@ func (s *FileLogStore) DeletePull(pull Pull) error {
 		return err
 	}
 
+	// Holding flushMu keeps an in-flight flush from recreating dir after it
+	// is removed.
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
 	s.mu.Lock()
-	for jobID, l := range s.open {
-		if l.pull == pull {
-			delete(s.open, jobID)
-			s.closeLog(jobID, l)
+	var dropped []*pendingLog
+	for jobID, p := range s.jobs {
+		if p.pull == pull {
+			delete(s.jobs, jobID)
+			dropped = append(dropped, p)
 		}
 	}
 	s.mu.Unlock()
+	for _, p := range dropped {
+		if p.f != nil {
+			_ = p.f.Close()
+		}
+	}
 
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("deleting job logs for %s#%d: %w", pull.RepoFullName, pull.Num, err)
@@ -165,14 +220,174 @@ func (s *FileLogStore) DeletePull(pull Pull) error {
 	return nil
 }
 
+// Close flushes everything buffered, closes all log files and stops the
+// background flusher. It reports an error if some output could not be
+// written.
 func (s *FileLogStore) Close() error {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+		close(s.stop)
+		<-s.done
+		s.flushAll()
+
+		s.flushMu.Lock()
+		s.mu.Lock()
+		for _, p := range s.jobs {
+			if p.f != nil {
+				s.closeFile(p)
+			}
+		}
+		s.mu.Unlock()
+		s.flushMu.Unlock()
+	})
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for jobID, l := range s.open {
-		s.closeLog(jobID, l)
+	unflushed := 0
+	for _, p := range s.jobs {
+		if p.buf.Len() > 0 || p.dropped > 0 {
+			unflushed++
+		}
 	}
-	s.open = map[string]*openLog{}
+	if unflushed > 0 {
+		return fmt.Errorf("job log store: output for %d job(s) could not be written", unflushed)
+	}
 	return nil
+}
+
+func (s *FileLogStore) signal() {
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
+}
+
+func (s *FileLogStore) run(flushInterval time.Duration) {
+	defer close(s.done)
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+		case <-s.kick:
+		}
+		s.flushAll()
+	}
+}
+
+func (s *FileLogStore) flushAll() {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	s.mu.Lock()
+	jobIDs := make([]string, 0, len(s.jobs))
+	for jobID, p := range s.jobs {
+		if p.buf.Len() > 0 || p.dropped > 0 || p.complete {
+			jobIDs = append(jobIDs, jobID)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, jobID := range jobIDs {
+		s.flushJob(jobID)
+	}
+}
+
+// flushJob appends jobID's buffered output to its file, and syncs and closes
+// the file once the job is complete and fully written. The caller must hold
+// flushMu. Only the bytes actually written are removed from the buffer, so a
+// failed or short write is retried, together with anything buffered since,
+// on the next flush.
+func (s *FileLogStore) flushJob(jobID string) {
+	s.mu.Lock()
+	p, ok := s.jobs[jobID]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	data := bytes.Clone(p.buf.Bytes())
+	bufLen := len(data)
+	dropped := p.dropped
+	complete := p.complete
+	s.mu.Unlock()
+
+	if dropped > 0 {
+		// The dropped lines came after everything buffered, so the marker
+		// goes last. It is only consumed once it is written.
+		data = fmt.Appendf(data, "[atlantis: %d line(s) of output dropped while the job log could not be written]\n", dropped)
+	}
+
+	var err error
+	written := 0
+	if len(data) > 0 {
+		written, err = s.append(jobID, p, data)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.buf.Next(min(written, bufLen))
+	if written == len(data) {
+		p.dropped -= dropped
+	}
+
+	if err != nil {
+		p.failures++
+		s.logger.Warn("job log store: writing output for job %s (attempt %d): %s", jobID, p.failures, err)
+		if complete && p.failures >= maxCompleteFlushAttempts {
+			s.logger.Err("job log store: giving up on %d byte(s) of output for job %s after %d attempts", p.buf.Len(), jobID, p.failures)
+			s.closeFile(p)
+			delete(s.jobs, jobID)
+		}
+		return
+	}
+	p.failures = 0
+
+	// Write may have added more output while the lock was released; the job
+	// is only done once nothing is left.
+	if p.complete && p.buf.Len() == 0 && p.dropped == 0 {
+		s.closeFile(p)
+		delete(s.jobs, jobID)
+	}
+}
+
+// append writes data to jobID's log file, creating it on first use. The
+// caller must hold flushMu.
+func (s *FileLogStore) append(jobID string, p *pendingLog, data []byte) (int, error) {
+	if p.f == nil {
+		f, err := s.create(p.pull, jobID)
+		if err != nil {
+			return 0, err
+		}
+		p.f = f
+	}
+	return p.f.Write(data)
+}
+
+// closeFile syncs and closes p's file. The caller must hold flushMu.
+func (s *FileLogStore) closeFile(p *pendingLog) {
+	if p.f == nil {
+		return
+	}
+	if err := errors.Join(p.f.Sync(), p.f.Close()); err != nil {
+		s.logger.Warn("job log store: closing log file %s: %s", p.f.Name(), err)
+	}
+	p.f = nil
+}
+
+func (s *FileLogStore) create(pull Pull, jobID string) (*os.File, error) {
+	dir, err := s.pullDir(pull)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- dir is built from an escaped repo name and a pull number, and jobID is validated by ValidJobID.
+	return os.OpenFile(filepath.Join(dir, jobID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
 // pullDir is where pull's job logs live. The repo full name is path-escaped

@@ -1116,16 +1116,22 @@ log after Atlantis restarts. Defaults to the `job-logs` subdirectory of
 `--data-dir`. A pull request's job logs are deleted when it is closed or
 merged.
 
+Output is buffered in memory and appended to the job's file every couple of
+seconds, and once more when the job finishes, so a slow volume never holds up
+live output. If Atlantis is killed mid-job, at most the last couple of seconds
+of that job's output are lost.
+
 When running multiple Atlantis replicas, point every replica at the same
 shared or network volume (for example NFS, Amazon EFS, Azure Files, or an S3
 bucket mounted as a filesystem). Any replica can then show the log of a job
 another replica ran, and closing a pull request deletes its logs for all of
 them. Without a shared volume, each replica only has the logs of the jobs it
 ran itself. Following a job's output live still works only on the replica
-running it; other replicas show what has been written so far.
+running it; other replicas show its output up to the last flush, a couple of
+seconds behind.
 
-The volume must support appending to an existing file, because each line is
-written as it is produced. NFS, EFS and Azure Files do. For S3, use a mount
+The volume must support appending to an existing file, because output is
+added to a job's file as the job runs. NFS, EFS and Azure Files do. For S3, use a mount
 that supports appends, such as s3fs; Mountpoint for Amazon S3 does not
 support appending to files in general-purpose buckets.
 
