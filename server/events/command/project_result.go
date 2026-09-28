@@ -58,6 +58,14 @@ func (p ProjectResult) PolicyStatus() []models.PolicySetStatus {
 	return policyStatuses
 }
 
+// PlanRisk returns the risk assessment of a successful plan, or nil.
+func (p ProjectResult) PlanRisk() *models.PlanRisk {
+	if p.Command != Plan || p.PlanSuccess == nil {
+		return nil
+	}
+	return p.PlanSuccess.Risk
+}
+
 // PlanStatus returns the plan status.
 func (p ProjectResult) PlanStatus() models.ProjectPlanStatus {
 	switch p.Command {

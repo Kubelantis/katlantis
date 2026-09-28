@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/db"
+	"github.com/runatlantis/atlantis/server/core/db/dbtest"
 
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -1427,4 +1429,13 @@ func newTestDB2(t *testing.T) *boltdb.BoltDB {
 func cleanupDB(db *bolt.DB) {
 	db.Close()           // nolint: errcheck
 	os.Remove(db.Path()) // nolint: errcheck
+}
+
+func TestConformance(t *testing.T) {
+	dbtest.Run(t, func(t *testing.T) db.Database {
+		b, err := boltdb.New(t.TempDir())
+		Ok(t, err)
+		t.Cleanup(func() { b.Close() }) // nolint: errcheck
+		return b
+	})
 }

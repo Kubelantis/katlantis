@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/locking"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -424,95 +425,13 @@ func (b *BoltDB) UpdatePullWithResults(pull models.PullRequest, newResults []com
 
 		// If there is no pull OR if the pull we have is out of date, we
 		// just write a new pull.
-		if currStatus == nil || pullStatusOutdatedForPull(currStatus.Pull, pull) {
-			var statuses []models.ProjectStatus
-			for _, r := range newResults {
-				statuses = append(statuses, b.projectResultToProject(r))
-			}
-			// Preserve policy status from the previous commit so approvals
-			// survive between the plan DB write and the subsequent policy
-			// check DB write. doPolicyCheck applies sticky filtering and
-			// overwrites these when it writes its own results.
-			if currStatus != nil {
-				for i := range statuses {
-					for _, old := range currStatus.Projects {
-						if statuses[i].Workspace == old.Workspace &&
-							statuses[i].RepoRelDir == old.RepoRelDir &&
-							statuses[i].ProjectName == old.ProjectName &&
-							len(old.PolicyStatus) > 0 {
-							statuses[i].PolicyStatus = old.PolicyStatus
-							break
-						}
-					}
-				}
-			}
-			newStatus = models.PullStatus{
-				Pull:     pull,
-				Projects: statuses,
-			}
-		} else {
-			// If there's an existing pull at the right commit then we have to
-			// merge our project results with the existing ones. We do a merge
-			// because it's possible a user is just applying a single project
-			// in this command and so we don't want to delete our data about
-			// other projects that aren't affected by this command.
-			newStatus = *currStatus
-			for _, res := range newResults {
-				// First, check if we should update any existing projects.
-				updatedExisting := false
-				for i := range newStatus.Projects {
-					// NOTE: We're using a reference here because we are
-					// in-place updating its Status field.
-					proj := &newStatus.Projects[i]
-					if res.Workspace == proj.Workspace &&
-						res.RepoRelDir == proj.RepoRelDir &&
-						res.ProjectName == proj.ProjectName {
-
-						proj.Status = res.PlanStatus()
-
-						// Updating only policy sets which are included in results; keeping the rest.
-						if len(proj.PolicyStatus) > 0 {
-							for i, oldPolicySet := range proj.PolicyStatus {
-								for _, newPolicySet := range res.PolicyStatus() {
-									if oldPolicySet.PolicySetName == newPolicySet.PolicySetName {
-										proj.PolicyStatus[i] = newPolicySet
-									}
-								}
-							}
-						} else {
-							proj.PolicyStatus = res.PolicyStatus()
-						}
-
-						updatedExisting = true
-						break
-					}
-				}
-
-				if !updatedExisting {
-					// If we didn't update an existing project, then we need to
-					// add this because it's a new one.
-					newStatus.Projects = append(newStatus.Projects, b.projectResultToProject(res))
-				}
-			}
-		}
-
-		// Now, we overwrite the key with our new status.
+		newStatus = db.MergePullResults(currStatus, pull, newResults)
 		return b.writePullToBucket(bucket, key, newStatus)
 	})
 	if err != nil {
 		return models.PullStatus{}, fmt.Errorf("DB transaction failed: %w", err)
 	}
 	return newStatus, nil
-}
-
-func pullStatusOutdatedForPull(statusPull models.PullRequest, pull models.PullRequest) bool {
-	if statusPull.HeadCommit != pull.HeadCommit {
-		return true
-	}
-	if pull.BaseBranch == "" {
-		return false
-	}
-	return statusPull.BaseBranch == "" || statusPull.BaseBranch != pull.BaseBranch
 }
 
 // GetPullStatus returns the status for pull.
@@ -627,16 +546,6 @@ func (b *BoltDB) writePullToBucket(bucket *bolt.Bucket, key []byte, pull models.
 		return fmt.Errorf("serializing: %w", err)
 	}
 	return bucket.Put(key, serialized)
-}
-
-func (b *BoltDB) projectResultToProject(p command.ProjectResult) models.ProjectStatus {
-	return models.ProjectStatus{
-		Workspace:    p.Workspace,
-		RepoRelDir:   p.RepoRelDir,
-		ProjectName:  p.ProjectName,
-		PolicyStatus: p.PolicyStatus(),
-		Status:       p.PlanStatus(),
-	}
 }
 
 // Ping checks the database connection health.

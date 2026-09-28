@@ -441,6 +441,8 @@ type PlanSuccess struct {
 	// branch we're merging into had been updated, and we had to merge again
 	// before planning
 	MergedAgain bool
+	// Risk is the plan risk assessment, if enabled.
+	Risk *PlanRisk `json:",omitempty"`
 }
 
 func NewPolicySetResult(policySetName string, policyOutput string, passed bool, reqApprovalCount int, policyItemRegex string) (*PolicySetResult, error) {
@@ -836,6 +838,8 @@ type ProjectStatus struct {
 	PolicyStatus []PolicySetStatus
 	// Status is the status of where this project is at in the planning cycle.
 	Status ProjectPlanStatus
+	// PlanRisk is the risk assessment of the latest plan, if enabled.
+	PlanRisk *PlanRisk `json:",omitempty"`
 }
 
 // ProjectPlanStatus is the status of where this project is at in the planning

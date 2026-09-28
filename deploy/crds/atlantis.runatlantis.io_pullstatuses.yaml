@@ -1,0 +1,244 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: pullstatuses.atlantis.runatlantis.io
+spec:
+  group: atlantis.runatlantis.io
+  names:
+    categories:
+    - atlantis
+    kind: PullStatus
+    listKind: PullStatusList
+    plural: pullstatuses
+    shortNames:
+    - aps
+    singular: pullstatus
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.pull.baseRepo.fullName
+      name: Repo
+      type: string
+    - jsonPath: .spec.pull.num
+      name: Pull
+      type: integer
+    - jsonPath: .spec.pull.headCommit
+      name: Head
+      priority: 1
+      type: string
+    - jsonPath: .spec.projectCount
+      name: Projects
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PullStatus is the plan/apply state of every project in a pull request.
+          One object exists per pull request; it is deleted when the pull is closed.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PullStatusSpec mirrors models.PullStatus.
+            properties:
+              projectCount:
+                description: ProjectCount is len(projects), kept for kubectl output.
+                type: integer
+              projects:
+                items:
+                  description: ProjectStatus mirrors models.ProjectStatus.
+                  properties:
+                    planRisk:
+                      description: PlanRisk mirrors models.PlanRisk.
+                      properties:
+                        assessedAt:
+                          format: date-time
+                          type: string
+                        blastRadius:
+                          description: BlastRadius is a decimal string (e.g. "1.42");
+                            CRDs avoid floats.
+                          type: string
+                        creates:
+                          type: integer
+                        deletes:
+                          type: integer
+                        error:
+                          type: string
+                        findings:
+                          items:
+                            description: PlanRiskFinding mirrors models.PlanRiskFinding.
+                            properties:
+                              action:
+                                type: string
+                              address:
+                                type: string
+                              probability:
+                                type: string
+                              reason:
+                                type: string
+                            required:
+                            - action
+                            - address
+                            - reason
+                            type: object
+                          type: array
+                        model:
+                          type: string
+                        replaces:
+                          type: integer
+                        tier:
+                          enum:
+                          - low
+                          - medium
+                          - high
+                          - critical
+                          - unknown
+                          type: string
+                        updates:
+                          type: integer
+                      required:
+                      - assessedAt
+                      - creates
+                      - deletes
+                      - replaces
+                      - tier
+                      - updates
+                      type: object
+                    policyStatus:
+                      items:
+                        description: PolicySetStatus mirrors models.PolicySetStatus.
+                        properties:
+                          approvals:
+                            items:
+                              description: PolicySetApproval mirrors models.PolicySetApproval.
+                              properties:
+                                approver:
+                                  type: string
+                                hashes:
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - approver
+                              type: object
+                            type: array
+                          hashes:
+                            items:
+                              type: string
+                            type: array
+                          passed:
+                            type: boolean
+                          policyItemRegex:
+                            type: string
+                          policySetName:
+                            type: string
+                        required:
+                        - passed
+                        - policySetName
+                        type: object
+                      type: array
+                    projectName:
+                      type: string
+                    repoRelDir:
+                      type: string
+                    status:
+                      enum:
+                      - plan_errored
+                      - planned
+                      - planned_no_changes
+                      - apply_errored
+                      - applied
+                      - plan_discarded
+                      - policy_check_errored
+                      - policy_check_passed
+                      type: string
+                    workspace:
+                      type: string
+                  required:
+                  - repoRelDir
+                  - status
+                  - workspace
+                  type: object
+                type: array
+              pull:
+                description: |-
+                  PullRequest mirrors models.PullRequest. The clone URL and body are
+                  intentionally not stored: the clone URL can embed VCS credentials, and the
+                  body is unbounded while objects are limited in size.
+                properties:
+                  author:
+                    type: string
+                  baseBranch:
+                    type: string
+                  baseRepo:
+                    description: Repo mirrors models.Repo without credentials.
+                    properties:
+                      fullName:
+                        type: string
+                      name:
+                        type: string
+                      owner:
+                        type: string
+                      sanitizedCloneURL:
+                        type: string
+                      vcsHostType:
+                        type: integer
+                      vcsHostname:
+                        type: string
+                    required:
+                    - fullName
+                    - vcsHostType
+                    - vcsHostname
+                    type: object
+                  hardenedNonPRRefCheckout:
+                    type: boolean
+                  headBranch:
+                    type: string
+                  headCommit:
+                    type: string
+                  num:
+                    type: integer
+                  state:
+                    enum:
+                    - open
+                    - closed
+                    type: string
+                  url:
+                    type: string
+                required:
+                - baseRepo
+                - headCommit
+                - num
+                - state
+                type: object
+            required:
+            - projectCount
+            - pull
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
