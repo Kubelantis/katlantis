@@ -40,6 +40,7 @@ import (
 	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/drift"
 	"github.com/runatlantis/atlantis/server/core/logstore"
+	"github.com/runatlantis/atlantis/server/core/planrisk"
 	"github.com/runatlantis/atlantis/server/core/redis"
 	"github.com/runatlantis/atlantis/server/core/terraform/tfclient"
 	"github.com/runatlantis/atlantis/server/jobs"
@@ -837,9 +838,26 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		return nil, fmt.Errorf("initializing policy check step runner: %w", err)
 	}
 
+	var planRiskAssessor events.PlanRiskAssessor
+	var planRiskMaxUnapproved models.PlanRiskTier
+	if userConfig.PlanRiskEnabled {
+		logger.Info("Plan risk assessment is enabled with model %s; plans above %q need approval to apply", userConfig.TypeSafeModel, userConfig.PlanRiskMaxUnapprovedTier)
+		planRiskAssessor = &planrisk.Assessor{
+			Evaluator: &planrisk.TypeSafeClient{
+				BaseURL:    userConfig.TypeSafeAPIURL,
+				APIKey:     userConfig.TypeSafeAPIKey,
+				Model:      userConfig.TypeSafeModel,
+				HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
+			},
+			FailureTier: models.PlanRiskTier(userConfig.PlanRiskFailureTier),
+		}
+		planRiskMaxUnapproved = models.PlanRiskTier(userConfig.PlanRiskMaxUnapprovedTier)
+	}
+
 	applyRequirementHandler := &events.DefaultCommandRequirementHandler{
-		WorkingDir:    workingDir,
-		VCSStatusName: userConfig.VCSStatusName,
+		WorkingDir:            workingDir,
+		VCSStatusName:         userConfig.VCSStatusName,
+		PlanRiskMaxUnapproved: planRiskMaxUnapproved,
 		ProjectImpactResolver: events.NewUndivergedProjectImpactResolver(
 			parserValidator,
 			projectFinder,
@@ -853,6 +871,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	cancellationTracker := events.NewCancellationTracker()
 
 	projectCommandRunner := &events.DefaultProjectCommandRunner{
+		PlanRiskAssessor: planRiskAssessor,
 		VcsClient:        vcsClient,
 		Locker:           projectLocker,
 		LockURLGenerator: router,

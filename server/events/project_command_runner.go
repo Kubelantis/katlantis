@@ -5,6 +5,7 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,8 +13,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/runatlantis/atlantis/server/core/config/valid"
+	"github.com/runatlantis/atlantis/server/core/planrisk"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -23,6 +26,7 @@ import (
 	"github.com/runatlantis/atlantis/server/logging"
 	"github.com/runatlantis/atlantis/server/tracing"
 	"github.com/runatlantis/atlantis/server/utils"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const OperationComplete = true
@@ -325,13 +329,15 @@ func errorWithStepOutput(err error, outputs []string) error {
 
 // DefaultProjectCommandRunner implements ProjectCommandRunner.
 type DefaultProjectCommandRunner struct {
-	VcsClient                 vcs.Client
-	Locker                    ProjectLocker
-	LockURLGenerator          LockURLGenerator
-	Logger                    logging.SimpleLogging
-	InitStepRunner            StepRunner
-	PlanStepRunner            StepRunner
-	ShowStepRunner            StepRunner
+	VcsClient        vcs.Client
+	Locker           ProjectLocker
+	LockURLGenerator LockURLGenerator
+	Logger           logging.SimpleLogging
+	InitStepRunner   StepRunner
+	PlanStepRunner   StepRunner
+	ShowStepRunner   StepRunner
+	// PlanRiskAssessor scores successful plans; nil disables plan risk.
+	PlanRiskAssessor          PlanRiskAssessor
 	ApplyStepRunner           StepRunner
 	CancelStepRunner          StepRunner
 	PolicyCheckStepRunner     StepRunner
@@ -874,13 +880,60 @@ func (p *DefaultProjectCommandRunner) doPlan(ctx command.ProjectContext) (*model
 		return nil, "", errorWithStepOutput(err, outputs)
 	}
 
-	return &models.PlanSuccess{
+	planSuccess := &models.PlanSuccess{
 		LockURL:         p.LockURLGenerator.GenerateLockURL(lockAttempt.LockKey),
 		TerraformOutput: strings.Join(outputs, "\n"),
 		RePlanCmd:       ctx.RePlanCmd,
 		ApplyCmd:        ctx.ApplyCmd,
 		MergedAgain:     mergedAgain,
-	}, "", nil
+	}
+	if p.PlanRiskAssessor != nil {
+		planSuccess.Risk = p.assessPlanRisk(ctx, projAbsPath, planSuccess)
+	}
+	return planSuccess, "", nil
+}
+
+// PlanRiskAssessor scores the risk of a plan from `terraform show -json`.
+type PlanRiskAssessor interface {
+	Assess(ctx context.Context, project planrisk.Project, showJSON []byte) *models.PlanRisk
+	Failure(err error) *models.PlanRisk
+}
+
+// assessPlanRisk runs `terraform show -json` on the plan and scores it. A
+// failure is recorded on the result rather than failing the plan; the
+// failure tier then decides whether apply needs review.
+func (p *DefaultProjectCommandRunner) assessPlanRisk(ctx command.ProjectContext, projAbsPath string, plan *models.PlanSuccess) *models.PlanRisk {
+	traceCtx, span := tracing.Start(ctx.Ctx(), "atlantis.plan_risk")
+	defer span.End()
+
+	var risk *models.PlanRisk
+	if plan.NoChanges() {
+		risk = &models.PlanRisk{Tier: models.PlanRiskLow, AssessedAt: time.Now().UTC()}
+	} else if showJSON, err := p.ShowStepRunner.Run(ctx, nil, projAbsPath, map[string]string{}); err != nil {
+		risk = p.PlanRiskAssessor.Failure(fmt.Errorf("running terraform show: %w", err))
+	} else {
+		risk = p.PlanRiskAssessor.Assess(traceCtx, planrisk.Project{
+			Repository: ctx.BaseRepo.FullName,
+			Directory:  ctx.RepoRelDir,
+			Workspace:  ctx.Workspace,
+			Name:       ctx.ProjectName,
+		}, []byte(showJSON))
+	}
+
+	span.SetAttributes(attribute.String("atlantis.plan_risk.tier", string(risk.Tier)), attribute.String("atlantis.plan_risk.model", risk.Model))
+	if risk.Error != "" {
+		tracing.Fail(span, risk.Error)
+		ctx.Log.Warn("plan risk assessment failed, using tier %q: %s", risk.Tier, risk.Error)
+	} else {
+		ctx.Log.Info("plan risk is %q (%d create, %d update, %d delete, %d replace; %d findings)", risk.Tier, risk.Creates, risk.Updates, risk.Deletes, risk.Replaces, len(risk.Findings))
+	}
+	if ctx.Scope != nil {
+		ctx.Scope.Tagged(map[string]string{"tier": string(risk.Tier)}).Counter("plan_risk_assessed").Inc(1)
+		if risk.Error != "" {
+			ctx.Scope.Counter("plan_risk_error").Inc(1)
+		}
+	}
+	return risk
 }
 
 func (p *DefaultProjectCommandRunner) doApply(ctx command.ProjectContext) (applyOut string, applyURL string, failure string, err error) {

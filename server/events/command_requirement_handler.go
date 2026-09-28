@@ -34,6 +34,9 @@ type DefaultCommandRequirementHandler struct {
 	// recognise Atlantis plan statuses when scoping the mergeable requirement
 	// to a single project.
 	VCSStatusName string
+	// PlanRiskMaxUnapproved enables the plan risk apply gate: plans rated
+	// above it need pull request approval. Empty disables the gate.
+	PlanRiskMaxUnapproved models.PlanRiskTier
 }
 
 func (a *DefaultCommandRequirementHandler) ValidateProjectDependencies(ctx command.ProjectContext) (failure string, err error) {
@@ -63,7 +66,53 @@ func (a *DefaultCommandRequirementHandler) ValidatePlanProject(repoDir string, c
 }
 
 func (a *DefaultCommandRequirementHandler) ValidateApplyProject(repoDir string, ctx command.ProjectContext) (failure string, err error) {
-	return a.validateCommandRequirement(repoDir, ctx, command.Apply, ctx.ApplyRequirements)
+	if failure, err = a.validateCommandRequirement(repoDir, ctx, command.Apply, ctx.ApplyRequirements); failure != "" || err != nil {
+		return failure, err
+	}
+	return a.validatePlanRisk(ctx), nil
+}
+
+// validatePlanRisk enforces --plan-risk-max-unapproved-tier. It is applied
+// to every project when plan risk is enabled, like a non-overridable
+// requirement, so repo config cannot opt out of it.
+func (a *DefaultCommandRequirementHandler) validatePlanRisk(ctx command.ProjectContext) string {
+	if a.PlanRiskMaxUnapproved == "" {
+		return ""
+	}
+	if ctx.API && ctx.Pull.Num <= 0 && ctx.SkipPRRequirements {
+		ctx.Log.Info("skipping plan risk requirement for opted-in API call without PR number")
+		return ""
+	}
+	risk := ctx.ProjectPlanRisk
+	if risk == nil {
+		return "The plan's risk has not been assessed. Run plan again before running apply."
+	}
+	if risk.Tier.Rank() <= a.PlanRiskMaxUnapproved.Rank() || ctx.PullReqStatus.ApprovalStatus.IsApproved {
+		return ""
+	}
+	return fmt.Sprintf("Plan risk is **%s**%s. The pull request must be approved before running apply; plans rated %s or lower can be applied without approval.",
+		risk.Tier, planRiskReasons(risk), a.PlanRiskMaxUnapproved)
+}
+
+func planRiskReasons(r *models.PlanRisk) string {
+	var reasons []string
+	for _, f := range r.Findings {
+		if f.Address != "" {
+			reasons = append(reasons, fmt.Sprintf("`%s` %s", f.Address, f.Reason))
+		} else {
+			reasons = append(reasons, f.Reason)
+		}
+		if len(reasons) == 3 {
+			break
+		}
+	}
+	if r.Error != "" {
+		reasons = append(reasons, "assessment failed")
+	}
+	if len(reasons) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(reasons, "; ") + ")"
 }
 
 func (a *DefaultCommandRequirementHandler) ValidateImportProject(repoDir string, ctx command.ProjectContext) (failure string, err error) {

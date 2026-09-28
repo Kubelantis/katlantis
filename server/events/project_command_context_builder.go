@@ -266,6 +266,7 @@ func newProjectCommandContext(ctx *command.Context,
 
 	var projectPlanStatus models.ProjectPlanStatus
 	var projectPolicyStatus []models.PolicySetStatus
+	var projectPlanRisk *models.PlanRisk
 
 	if ctx.PullStatus != nil {
 		for _, project := range ctx.PullStatus.Projects {
@@ -274,12 +275,14 @@ func newProjectCommandContext(ctx *command.Context,
 			if projCfg.Name == "" && project.RepoRelDir == projCfg.RepoRelDir {
 				projectPlanStatus = project.Status
 				projectPolicyStatus = project.PolicyStatus
+				projectPlanRisk = project.PlanRisk
 				break
 			}
 
 			if projCfg.Name != "" && project.ProjectName == projCfg.Name {
 				projectPlanStatus = project.Status
 				projectPolicyStatus = project.PolicyStatus
+				projectPlanRisk = project.PlanRisk
 				break
 			}
 		}
@@ -311,6 +314,7 @@ func newProjectCommandContext(ctx *command.Context,
 		Scope:                           scope,
 		ProjectPlanStatus:               projectPlanStatus,
 		ProjectPolicyStatus:             projectPolicyStatus,
+		ProjectPlanRisk:                 projectPlanRisk,
 		Pull:                            ctx.Pull,
 		ProjectName:                     projCfg.Name,
 		PlanRequirements:                projCfg.PlanRequirements,

@@ -3,6 +3,7 @@
 {{ if .EnableDiffMarkdownFormat }}{{ .DiffMarkdownFormattedTerraformOutput }}{{ else }}{{ .TerraformOutput }}{{ end }}
 ```
 
+{{ template "planRisk" . -}}
 {{ if .PlanWasDeleted -}}
 Este plan no se guardó porque uno o más proyectos fallaron y automerge requiere que todos los planes pasen.
 {{ else -}}

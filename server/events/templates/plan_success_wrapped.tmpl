@@ -6,6 +6,7 @@
 ```
 </details>
 
+{{ template "planRisk" . -}}
 {{ if .PlanWasDeleted -}}
 This plan was not saved because one or more projects failed and automerge requires all plans pass.
 {{ else -}}

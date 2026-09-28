@@ -7,13 +7,16 @@ import "time"
 type PlanRiskTier string
 
 const (
-	// PlanRiskLow plans may be applied without extra review.
+	// Which tiers need pull request approval before apply is set by
+	// --plan-risk-max-unapproved-tier.
+
+	// PlanRiskLow plans are additive or isolated.
 	PlanRiskLow PlanRiskTier = "low"
-	// PlanRiskMedium plans require the pull request to be approved.
+	// PlanRiskMedium plans delete resources, touch security, or change production.
 	PlanRiskMedium PlanRiskTier = "medium"
-	// PlanRiskHigh plans require approval and are highlighted to reviewers.
+	// PlanRiskHigh plans may lose data or have a broad blast radius.
 	PlanRiskHigh PlanRiskTier = "high"
-	// PlanRiskCritical plans require approval and an explicit risk acknowledgement.
+	// PlanRiskCritical plans may lose production data or affect foundations.
 	PlanRiskCritical PlanRiskTier = "critical"
 	// PlanRiskUnknown means the assessment could not be completed.
 	PlanRiskUnknown PlanRiskTier = "unknown"

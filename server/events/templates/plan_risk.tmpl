@@ -1,0 +1,11 @@
+{{ define "planRisk" -}}
+{{ with .Risk -}}
+**Plan risk:** {{ if eq (print .Tier) "low" }}:green_circle:{{ else if eq (print .Tier) "medium" }}:yellow_circle:{{ else if eq (print .Tier) "high" }}:orange_circle:{{ else }}:red_circle:{{ end }} **{{ .Tier }}** ({{ .Creates }} to create, {{ .Updates }} to update, {{ .Deletes }} to delete, {{ .Replaces }} to replace)
+{{ range .Findings -}}
+* {{ if .Address }}`{{ .Address }}` {{ end }}{{ .Reason }}
+{{ end -}}
+{{ if .Error -}}
+* Risk could not be assessed ({{ trunc 200 .Error }}), so the configured failure tier was used.
+{{ end }}
+{{ end -}}
+{{ end -}}

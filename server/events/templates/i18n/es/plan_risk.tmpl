@@ -1,0 +1,11 @@
+{{ define "planRisk" -}}
+{{ with .Risk -}}
+**Riesgo del plan:** {{ if eq (print .Tier) "low" }}:green_circle:{{ else if eq (print .Tier) "medium" }}:yellow_circle:{{ else if eq (print .Tier) "high" }}:orange_circle:{{ else }}:red_circle:{{ end }} **{{ .Tier }}** ({{ .Creates }} para crear, {{ .Updates }} para actualizar, {{ .Deletes }} para eliminar, {{ .Replaces }} para reemplazar)
+{{ range .Findings -}}
+* {{ if .Address }}`{{ .Address }}` {{ end }}{{ .Reason }}
+{{ end -}}
+{{ if .Error -}}
+* No se pudo evaluar el riesgo ({{ trunc 200 .Error }}), por lo que se usó el nivel configurado para fallos.
+{{ end }}
+{{ end -}}
+{{ end -}}

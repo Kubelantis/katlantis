@@ -1341,6 +1341,8 @@ type setupOption struct {
 	disableAutoplan         bool
 	disablePreWorkflowHooks bool
 	userConfig              server.UserConfig
+	planRiskAssessor        events.PlanRiskAssessor
+	planRiskMaxUnapproved   models.PlanRiskTier
 }
 
 func setupE2E(t *testing.T, repoDir string, opt setupOption) (events_controllers.VCSEventsController, *vcsmocks.MockClient, *mocks.MockGithubPullGetter, *events.FileWorkspace) {
@@ -1553,8 +1555,10 @@ func setupE2E(t *testing.T, repoDir string, opt setupOption) (events_controllers
 		Webhooks:         &mockWebhookSender{},
 		WorkingDirLocker: locker,
 		CommandRequirementHandler: &events.DefaultCommandRequirementHandler{
-			WorkingDir: workingDir,
+			WorkingDir:            workingDir,
+			PlanRiskMaxUnapproved: opt.planRiskMaxUnapproved,
 		},
+		PlanRiskAssessor:    opt.planRiskAssessor,
 		CancellationTracker: cancellationTracker,
 		ApplyPlanValidator: &events.DefaultApplyPlanValidator{
 			PullStatusFetcher: database,

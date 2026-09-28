@@ -110,6 +110,8 @@ type ProjectContext struct {
 	PullStatus *models.PullStatus
 	// ProjectPolicyStatus is the status of policy sets of the current project prior to this command.
 	ProjectPolicyStatus []models.PolicySetStatus
+	// ProjectPlanRisk is the risk assessment of the current project's latest plan.
+	ProjectPlanRisk *models.PlanRisk
 	// RunPolicyChecks is true for API workflows that explicitly execute policy
 	// checks and should fail closed if policy status is missing.
 	RunPolicyChecks bool
