@@ -4,6 +4,8 @@
 package command
 
 import (
+	"context"
+
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/logging"
 	tally "github.com/uber-go/tally/v4"
@@ -23,6 +25,9 @@ const (
 // Context represents the context of a command that should be executed
 // for a pull request.
 type Context struct {
+	// TraceContext carries the active trace span for this command. It is
+	// never cancelled; use Ctx() to read it.
+	TraceContext context.Context
 	// HeadRepo is the repository that is getting merged into the BaseRepo.
 	// If the pull request branch is from the same repository then HeadRepo will
 	// be the same as BaseRepo.
@@ -108,4 +113,12 @@ type Context struct {
 	// cloned repo config before falling back to VCS content. This is used after
 	// pre-workflow hooks may have generated or updated atlantis.yaml.
 	PreferLocalRepoCfgForTargetedIgnore bool
+}
+
+// Ctx returns the trace context of this command, or context.Background().
+func (c *Context) Ctx() context.Context {
+	if c == nil || c.TraceContext == nil {
+		return context.Background()
+	}
+	return c.TraceContext
 }

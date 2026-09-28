@@ -7,6 +7,7 @@ import (
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/metrics"
+	"github.com/runatlantis/atlantis/server/tracing"
 	tally "github.com/uber-go/tally/v4"
 )
 
@@ -79,6 +80,16 @@ func RunAndEmitStats(ctx command.ProjectContext, execute func(ctx command.Projec
 	executionTime := scope.Timer(metrics.ExecutionTimeMetric).Start()
 	defer executionTime.Stop()
 
+	traceCtx, span := tracing.Start(ctx.Ctx(), "atlantis.project."+commandName,
+		tracing.AttrRepo.String(ctx.BaseRepo.FullName),
+		tracing.AttrPull.Int(ctx.Pull.Num),
+		tracing.AttrProject.String(ctx.ProjectName),
+		tracing.AttrWorkspace.String(ctx.Workspace),
+		tracing.AttrDir.String(ctx.RepoRelDir),
+	)
+	defer span.End()
+	ctx.TraceContext = traceCtx
+
 	executionSuccess := scope.Counter(metrics.ExecutionSuccessMetric)
 	executionError := scope.Counter(metrics.ExecutionErrorMetric)
 	executionFailure := scope.Counter(metrics.ExecutionFailureMetric)
@@ -86,12 +97,15 @@ func RunAndEmitStats(ctx command.ProjectContext, execute func(ctx command.Projec
 	result := execute(ctx)
 
 	if result.Error != nil {
+		span.RecordError(result.Error)
+		tracing.Fail(span, result.Error.Error())
 		executionError.Inc(1)
 		logger.Err("Error running %s operation: %s", commandName, result.Error.Error())
 		return result
 	}
 
 	if result.Failure != "" {
+		tracing.Fail(span, result.Failure)
 		executionFailure.Inc(1)
 		logger.Err("Failure running %s operation: %s", commandName, result.Failure)
 		return result

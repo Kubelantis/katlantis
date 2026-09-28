@@ -4,6 +4,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,8 +23,10 @@ const (
 // ProjectContext defines the context for a plan or apply stage that will
 // be executed for a project.
 type ProjectContext struct {
-	CommandName Name
-	SubCommand  string
+	// TraceContext carries the active trace span; use Ctx() to read it.
+	TraceContext context.Context
+	CommandName  Name
+	SubCommand   string
 	// ApplyCmd is the command that users should run to apply this plan. If
 	// this is an apply then this will be empty.
 	ApplyCmd string
@@ -287,4 +290,12 @@ func (p ProjectContext) PolicyCleared() bool {
 		}
 	}
 	return passing
+}
+
+// Ctx returns the trace context of this project command, or context.Background().
+func (p ProjectContext) Ctx() context.Context {
+	if p.TraceContext == nil {
+		return context.Background()
+	}
+	return p.TraceContext
 }

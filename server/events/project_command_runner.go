@@ -21,6 +21,7 @@ import (
 	"github.com/runatlantis/atlantis/server/events/webhooks"
 	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/logging"
+	"github.com/runatlantis/atlantis/server/tracing"
 	"github.com/runatlantis/atlantis/server/utils"
 )
 
@@ -1159,44 +1160,7 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 
 	envs := make(map[string]string)
 	for _, step := range steps {
-		var out string
-		var err error
-		switch step.StepName {
-		case "init":
-			out, err = p.InitStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "plan":
-			out, err = p.PlanStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "show":
-			_, err = p.ShowStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "policy_check":
-			out, err = p.PolicyCheckStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "apply":
-			if err = ValidateNonPRAPIRefUnchanged(ctx, absPath); err != nil {
-				return outputs, err
-			}
-			if ctx.CommandName == command.Apply && p.ApplyPlanValidator != nil {
-				if err = p.ApplyPlanValidator.ValidateProjectPlan(ctx, absPath); err != nil {
-					return outputs, err
-				}
-			}
-			out, err = p.ApplyStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "version":
-			out, err = p.VersionStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "import":
-			out, err = p.ImportStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "state_rm":
-			out, err = p.StateRmStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-		case "run":
-			out, err = p.RunStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, !ctx.SuppressJobOutput, step.Output, step.FilterRegexes)
-		case "env":
-			out, err = p.EnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, step.EnvVarValue, absPath, envs)
-			envs[step.EnvVarName] = out
-			// We reset out to the empty string because we don't want it to
-			// be printed to the PR, it's solely to set the environment variable.
-			out = ""
-		case "multienv":
-			out, err = p.MultiEnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, step.Output)
-		}
+		out, err := p.runStep(step, ctx, absPath, envs)
 
 		// Keep all policy_check outputs for custom policy checks to maintain positional alignment with policy sets
 		// Empty outputs are still appended to prevent index mismatches
@@ -1208,6 +1172,50 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 		}
 	}
 	return outputs, nil
+}
+
+// runStep runs a single workflow step inside its own trace span.
+func (p *DefaultProjectCommandRunner) runStep(step valid.Step, ctx command.ProjectContext, absPath string, envs map[string]string) (out string, err error) {
+	_, span := tracing.Start(ctx.Ctx(), "atlantis.step."+step.StepName, tracing.AttrStep.String(step.StepName))
+	defer func() { tracing.End(span, err) }()
+
+	switch step.StepName {
+	case "init":
+		out, err = p.InitStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "plan":
+		out, err = p.PlanStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "show":
+		_, err = p.ShowStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "policy_check":
+		out, err = p.PolicyCheckStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "apply":
+		if err = ValidateNonPRAPIRefUnchanged(ctx, absPath); err != nil {
+			return "", err
+		}
+		if ctx.CommandName == command.Apply && p.ApplyPlanValidator != nil {
+			if err = p.ApplyPlanValidator.ValidateProjectPlan(ctx, absPath); err != nil {
+				return "", err
+			}
+		}
+		out, err = p.ApplyStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "version":
+		out, err = p.VersionStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "import":
+		out, err = p.ImportStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "state_rm":
+		out, err = p.StateRmStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
+	case "run":
+		out, err = p.RunStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, !ctx.SuppressJobOutput, step.Output, step.FilterRegexes)
+	case "env":
+		out, err = p.EnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, step.EnvVarValue, absPath, envs)
+		envs[step.EnvVarName] = out
+		// We reset out to the empty string because we don't want it to
+		// be printed to the PR, it's solely to set the environment variable.
+		out = ""
+	case "multienv":
+		out, err = p.MultiEnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, step.Output)
+	}
+	return out, err
 }
 
 // getMissingPolicySetNames returns the names of policy sets that don't have corresponding outputs

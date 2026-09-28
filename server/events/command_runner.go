@@ -5,6 +5,7 @@
 package events
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"github.com/runatlantis/atlantis/server/logging"
 	"github.com/runatlantis/atlantis/server/metrics"
 	"github.com/runatlantis/atlantis/server/recovery"
+	"github.com/runatlantis/atlantis/server/tracing"
 	"github.com/uber-go/tally/v4"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
@@ -38,6 +40,15 @@ type CommandRunner interface {
 	// and then calling the appropriate services to finish executing the command.
 	RunCommentCommand(baseRepo models.Repo, maybeHeadRepo *models.Repo, maybePull *models.PullRequest, user models.User, pullNum int, cmd *CommentCommand)
 	RunAutoplanCommand(baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User)
+}
+
+// ContextCommandRunner is implemented by command runners that accept a
+// context carrying trace information. ctx must not be cancelled when the
+// triggering HTTP request completes; use context.WithoutCancel.
+type ContextCommandRunner interface {
+	CommandRunner
+	RunCommentCommandWithContext(ctx context.Context, baseRepo models.Repo, maybeHeadRepo *models.Repo, maybePull *models.PullRequest, user models.User, pullNum int, cmd *CommentCommand)
+	RunAutoplanCommandWithContext(ctx context.Context, baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User)
 }
 
 //go:generate go tool pegomock generate github.com/runatlantis/atlantis/server/events --package mocks -o mocks/mock_github_pull_getter.go GithubPullGetter
@@ -143,6 +154,14 @@ type DefaultCommandRunner struct {
 
 // RunAutoplanCommand runs plan and policy_checks when a pull request is opened or updated.
 func (c *DefaultCommandRunner) RunAutoplanCommand(baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User) {
+	c.RunAutoplanCommandWithContext(context.Background(), baseRepo, headRepo, pull, user)
+}
+
+// RunAutoplanCommandWithContext implements ContextCommandRunner.
+func (c *DefaultCommandRunner) RunAutoplanCommandWithContext(traceCtx context.Context, baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User) {
+	traceCtx, span := tracing.Start(traceCtx, "atlantis.autoplan",
+		tracing.AttrRepo.String(baseRepo.FullName), tracing.AttrPull.Int(pull.Num), tracing.AttrCommand.String(command.Autoplan.String()))
+	defer span.End()
 	if opStarted := c.Drainer.StartOp(); !opStarted {
 		if commentErr := c.VCSClient.CreateComment(c.Logger, baseRepo, pull.Num, ShutdownComment, command.Plan.String()); commentErr != nil {
 			c.Logger.Log(logging.Error, "unable to comment that Atlantis is shutting down: %s", commentErr)
@@ -151,7 +170,7 @@ func (c *DefaultCommandRunner) RunAutoplanCommand(baseRepo models.Repo, headRepo
 	}
 	defer c.Drainer.OpDone()
 
-	log := c.buildLogger(baseRepo.FullName, pull.Num)
+	log := c.buildLogger(traceCtx, baseRepo.FullName, pull.Num)
 	defer c.logPanics(baseRepo, pull.Num, log)
 	status, err := c.PullStatusFetcher.GetPullStatus(pull)
 
@@ -184,13 +203,14 @@ func (c *DefaultCommandRunner) RunAutoplanCommand(baseRepo models.Repo, headRepo
 	}
 
 	ctx := &command.Context{
-		User:       user,
-		Log:        log,
-		Scope:      scope,
-		Pull:       pull,
-		HeadRepo:   headRepo,
-		PullStatus: status,
-		Trigger:    command.AutoTrigger,
+		TraceContext: traceCtx,
+		User:         user,
+		Log:          log,
+		Scope:        scope,
+		Pull:         pull,
+		HeadRepo:     headRepo,
+		PullStatus:   status,
+		Trigger:      command.AutoTrigger,
 	}
 	if !c.validateCtxAndComment(ctx, command.Autoplan, true) {
 		return
@@ -462,6 +482,19 @@ func (c *DefaultCommandRunner) validateCommentCommand(ctx *command.Context, base
 // the event is further validated before making an additional (potentially
 // wasteful) call to get the necessary data.
 func (c *DefaultCommandRunner) RunCommentCommand(baseRepo models.Repo, maybeHeadRepo *models.Repo, maybePull *models.PullRequest, user models.User, pullNum int, cmd *CommentCommand) {
+	c.RunCommentCommandWithContext(context.Background(), baseRepo, maybeHeadRepo, maybePull, user, pullNum, cmd)
+}
+
+// RunCommentCommandWithContext implements ContextCommandRunner.
+func (c *DefaultCommandRunner) RunCommentCommandWithContext(traceCtx context.Context, baseRepo models.Repo, maybeHeadRepo *models.Repo, maybePull *models.PullRequest, user models.User, pullNum int, cmd *CommentCommand) {
+	spanName, cmdName := "atlantis.command", ""
+	if cmd != nil {
+		cmdName = cmd.Name.String()
+		spanName += "." + cmdName
+	}
+	traceCtx, span := tracing.Start(traceCtx, spanName,
+		tracing.AttrRepo.String(baseRepo.FullName), tracing.AttrPull.Int(pullNum), tracing.AttrCommand.String(cmdName))
+	defer span.End()
 	if opStarted := c.Drainer.StartOp(); !opStarted {
 		if commentErr := c.VCSClient.CreateComment(c.Logger, baseRepo, pullNum, ShutdownComment, ""); commentErr != nil {
 			c.Logger.Log(logging.Error, "unable to comment that Atlantis is shutting down: %s", commentErr)
@@ -470,7 +503,7 @@ func (c *DefaultCommandRunner) RunCommentCommand(baseRepo models.Repo, maybeHead
 	}
 	defer c.Drainer.OpDone()
 
-	log := c.buildLogger(baseRepo.FullName, pullNum)
+	log := c.buildLogger(traceCtx, baseRepo.FullName, pullNum)
 	defer c.logPanics(baseRepo, pullNum, log)
 
 	scope := c.StatsScope.SubScope("comment")
@@ -493,6 +526,7 @@ func (c *DefaultCommandRunner) RunCommentCommand(baseRepo models.Repo, maybeHead
 	}
 
 	ctx := &command.Context{
+		TraceContext:         traceCtx,
 		User:                 user,
 		Log:                  log,
 		Pull:                 pull,
@@ -624,12 +658,12 @@ func (c *DefaultCommandRunner) getAzureDevopsData(logger logging.SimpleLogging, 
 	return pull, headRepo, nil
 }
 
-func (c *DefaultCommandRunner) buildLogger(repoFullName string, pullNum int) logging.SimpleLogging {
-
-	return c.Logger.WithHistory(
+func (c *DefaultCommandRunner) buildLogger(traceCtx context.Context, repoFullName string, pullNum int) logging.SimpleLogging {
+	fields := append([]any{
 		"repo", repoFullName,
 		"pull", strconv.Itoa(pullNum),
-	)
+	}, tracing.LogFields(traceCtx)...)
+	return c.Logger.WithHistory(fields...)
 }
 
 func (c *DefaultCommandRunner) ensureValidRepoMetadata(

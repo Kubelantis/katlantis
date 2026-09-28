@@ -5,6 +5,7 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,10 +96,22 @@ type VCSEventsController struct {
 	AzureDevopsWebhookBasicPassword []byte
 	AzureDevopsRequestValidator     AzureDevopsRequestValidator `validate:"required"`
 	GiteaWebhookSecret              []byte
+
+	// reqCtx is the trace context of the webhook being handled. Post sets it
+	// on a per-request shallow copy of the controller; it is nil when handlers
+	// are called directly.
+	reqCtx context.Context
 }
 
 // Post handles POST webhook requests.
 func (e *VCSEventsController) Post(w http.ResponseWriter, r *http.Request) {
+	// Commands outlive the request, so keep its trace but drop its cancellation.
+	ec := *e
+	ec.reqCtx = context.WithoutCancel(r.Context())
+	ec.post(w, r)
+}
+
+func (e *VCSEventsController) post(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get(giteaHeader) != "" {
 		if !e.supportsHost(models.Gitea) {
 			e.respond(w, logging.Debug, http.StatusBadRequest, "Ignoring request since not configured to support Gitea")
@@ -590,10 +603,10 @@ func (e *VCSEventsController) handlePullRequestEvent(logger logging.SimpleLoggin
 		// We use a goroutine so that this function returns and the connection is
 		// closed.
 		if !e.TestingMode {
-			go e.CommandRunner.RunAutoplanCommand(baseRepo, headRepo, pull, user)
+			go e.runAutoplan(baseRepo, headRepo, pull, user)
 		} else {
 			// When testing we want to wait for everything to complete.
-			e.CommandRunner.RunAutoplanCommand(baseRepo, headRepo, pull, user)
+			e.runAutoplan(baseRepo, headRepo, pull, user)
 		}
 		return HTTPResponse{
 			body: "Processing...",
@@ -739,10 +752,10 @@ func (e *VCSEventsController) handleCommentEvent(logger logging.SimpleLogging, b
 		// Respond with success and then actually execute the command asynchronously.
 		// We use a goroutine so that this function returns and the connection is
 		// closed.
-		go e.CommandRunner.RunCommentCommand(baseRepo, maybeHeadRepo, maybePull, user, pullNum, parseResult.Command)
+		go e.runComment(baseRepo, maybeHeadRepo, maybePull, user, pullNum, parseResult.Command)
 	} else {
 		// When testing we want to wait for everything to complete.
-		e.CommandRunner.RunCommentCommand(baseRepo, maybeHeadRepo, maybePull, user, pullNum, parseResult.Command)
+		e.runComment(baseRepo, maybeHeadRepo, maybePull, user, pullNum, parseResult.Command)
 	}
 
 	return HTTPResponse{
@@ -916,4 +929,27 @@ func isAzureDevOpsTestRepoURL(repository *azuredevops.GitRepository) bool {
 		return false
 	}
 	return repository.GetURL() == azuredevopsTestURL
+}
+
+func (e *VCSEventsController) traceCtx() context.Context {
+	if e.reqCtx == nil {
+		return context.Background()
+	}
+	return e.reqCtx
+}
+
+func (e *VCSEventsController) runAutoplan(baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User) {
+	if r, ok := e.CommandRunner.(events.ContextCommandRunner); ok {
+		r.RunAutoplanCommandWithContext(e.traceCtx(), baseRepo, headRepo, pull, user)
+		return
+	}
+	e.CommandRunner.RunAutoplanCommand(baseRepo, headRepo, pull, user)
+}
+
+func (e *VCSEventsController) runComment(baseRepo models.Repo, maybeHeadRepo *models.Repo, maybePull *models.PullRequest, user models.User, pullNum int, cmd *events.CommentCommand) {
+	if r, ok := e.CommandRunner.(events.ContextCommandRunner); ok {
+		r.RunCommentCommandWithContext(e.traceCtx(), baseRepo, maybeHeadRepo, maybePull, user, pullNum, cmd)
+		return
+	}
+	e.CommandRunner.RunCommentCommand(baseRepo, maybeHeadRepo, maybePull, user, pullNum, cmd)
 }
