@@ -112,3 +112,22 @@ func TestPlanHolderIsTheReplicaThatPlanned(t *testing.T) {
 	Ok(t, err)
 	Equals(t, "atlantis-1", holder)
 }
+
+func TestPullStatusExistsIgnoresVCSHost(t *testing.T) {
+	d, _, _ := newDB(t)
+	pull := models.PullRequest{Num: 4, HeadCommit: "sha", BaseRepo: models.Repo{FullName: "org/repo", VCSHost: models.VCSHost{Hostname: "gitlab.example.com"}}}
+	ok, err := d.PullStatusExists("org/repo", 4)
+	Ok(t, err)
+	Assert(t, !ok, "no status yet")
+	_, err = d.UpdatePullWithResults(pull, []command.ProjectResult{{Command: command.Plan, RepoRelDir: ".", Workspace: "default",
+		ProjectCommandOutput: command.ProjectCommandOutput{PlanSuccess: &models.PlanSuccess{TerraformOutput: "x"}}}})
+	Ok(t, err)
+	ok, err = d.PullStatusExists("org/repo", 4)
+	Ok(t, err)
+	Assert(t, ok, "status must be found without the VCS host")
+	ok, _ = d.PullStatusExists("org/repo", 5)
+	Assert(t, !ok, "other pull must not match")
+	Ok(t, d.DeletePullStatus(pull))
+	ok, _ = d.PullStatusExists("org/repo", 4)
+	Assert(t, !ok, "deleted status must be gone")
+}

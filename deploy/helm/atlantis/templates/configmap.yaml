@@ -6,3 +6,14 @@ metadata:
 data:
   repos.yaml: |
     {{- .Values.repoConfig | nindent 4 }}
+    {{- if include "atlantis.externalStoresEnabled" . }}
+    external_stores:
+      {{- if .Values.externalStores.planStore.enabled }}
+      plan_store:
+        {{- include "atlantis.s3store" .Values.externalStores.planStore | nindent 8 }}
+      {{- end }}
+      {{- if .Values.externalStores.logStore.enabled }}
+      log_store:
+        {{- include "atlantis.s3store" .Values.externalStores.logStore | nindent 8 }}
+      {{- end }}
+    {{- end }}

@@ -533,6 +533,27 @@ func (k *KubeDB) UpdateProjectStatus(pull models.PullRequest, workspace string, 
 	return nil
 }
 
+// PullStatusExists reports whether any VCS host has a PullStatus for the
+// repo's pull. Local files only know the repo name, not the VCS host.
+func (k *KubeDB) PullStatusExists(repoFullName string, pullNum int) (bool, error) {
+	ctx, cancel := k.ctx()
+	defer cancel()
+	var list v1alpha1.PullStatusList
+	err := k.c.List(ctx, &list, client.InNamespace(k.ns), client.MatchingLabels{
+		kube.LabelRepo: kube.Hash(repoFullName),
+		kube.LabelPull: strconv.Itoa(pullNum),
+	})
+	if err != nil {
+		return false, fmt.Errorf("listing pull statuses: %w", err)
+	}
+	for _, item := range list.Items {
+		if item.Spec.Pull.BaseRepo.FullName == repoFullName && item.Spec.Pull.Num == pullNum {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // PlanHolder returns the replica that made the pull's latest plan, or "".
 func (k *KubeDB) PlanHolder(repo models.Repo, pullNum int) (string, error) {
 	ctx, cancel := k.ctx()

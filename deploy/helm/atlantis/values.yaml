@@ -42,6 +42,35 @@ repoConfig: |
     prometheus:
       endpoint: /metrics
 
+# -- Object storage (S3 or S3-compatible) shared by all replicas. Credentials
+# come from the default AWS chain: use workload identity (e.g. IRSA via
+# serviceAccount.annotations) rather than static keys.
+externalStores:
+  # -- Plans in object storage: any replica can apply, and plans survive
+  # losing a replica or its volume. Applies then no longer wait for the
+  # replica that made the plan.
+  planStore:
+    enabled: false
+    bucket: ""
+    region: ""
+    prefix: atlantis/plans
+    endpoint: ""
+    forcePathStyle: false
+    # -- AES256, aws:kms or aws:kms:dsse. Plans can contain secrets.
+    serverSideEncryption: AES256
+    kmsKeyId: ""
+  # -- Completed job logs archived to object storage: any replica serves
+  # them and they survive losing a replica.
+  logStore:
+    enabled: false
+    bucket: ""
+    region: ""
+    prefix: atlantis/job-logs
+    endpoint: ""
+    forcePathStyle: false
+    serverSideEncryption: AES256
+    kmsKeyId: ""
+
 planRisk:
   # -- Score every plan with TypeSafe Jev. Needs ATLANTIS_TYPESAFE_API_KEY in vcsSecretName.
   enabled: false

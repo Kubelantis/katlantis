@@ -85,6 +85,10 @@ spec:
               value: /atlantis-data
             - name: ATLANTIS_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            {{- if include "atlantis.externalStoresEnabled" . }}
+            - name: ATLANTIS_ENABLE_EXTERNAL_STORES
+              value: "true"
+            {{- end }}
             {{- if .Values.planRisk.enabled }}
             - name: ATLANTIS_PLAN_RISK_ENABLED
               value: "true"

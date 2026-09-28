@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	tally "github.com/uber-go/tally/v4"
@@ -40,9 +41,11 @@ import (
 )
 
 const (
-	commandsPath  = "/internal/v1/commands"
-	cleanupPath   = "/internal/v1/cleanup"
-	jobExistsPath = "/internal/v1/jobs/"
+	commandsPath = "/internal/v1/commands"
+	cleanupPath  = "/internal/v1/cleanup"
+	// replicaCleanupPath removes only a replica's local resources for a pull.
+	replicaCleanupPath = "/internal/v1/cleanup-replica"
+	jobExistsPath      = "/internal/v1/jobs/"
 
 	// ForwardedHeader marks proxied requests so they are never proxied again.
 	ForwardedHeader = "X-Atlantis-Forwarded-By"
@@ -395,6 +398,29 @@ func (r *Router) RunAutoplanCommandWithContext(ctx context.Context, baseRepo mod
 	}
 	r.Scope.Counter("local").Inc(1)
 	runLocal()
+}
+
+var _ events.PeerCleaner = (*Router)(nil)
+
+// CleanUpPeers implements events.PeerCleaner: every other live replica drops
+// its clones and job output for the pull. It runs in parallel and is best
+// effort; replicas that miss it are cleaned by their janitor.
+func (r *Router) CleanUpPeers(logger logging.SimpleLogging, repo models.Repo, pull models.PullRequest) {
+	var wg sync.WaitGroup
+	for _, m := range r.Owners.Members() {
+		if m.Identity == r.Owners.Identity() || m.Address == "" {
+			continue
+		}
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), r.timeout())
+			defer cancel()
+			if err := r.Client.post(ctx, m, replicaCleanupPath, cleanupRequest{Repo: repo, Pull: pull}); err != nil {
+				r.Scope.Counter("peer_cleanup_error").Inc(1)
+				logger.Warn("replica %s did not clean up %s#%d: %s", m.Identity, repo.FullName, pull.Num, err)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 // CleanUpPull implements events.PullCleaner. It runs on the owner so the

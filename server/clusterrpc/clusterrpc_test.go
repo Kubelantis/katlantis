@@ -353,3 +353,36 @@ func TestApplyRoutesToPlanHolder(t *testing.T) {
 		ownerRunner.wait(t)
 	})
 }
+
+type recordingReplica struct {
+	mu    sync.Mutex
+	pulls []int
+}
+
+func (r *recordingReplica) CleanUpReplica(_ logging.SimpleLogging, _ models.Repo, pull models.PullRequest) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pulls = append(r.pulls, pull.Num)
+	return nil
+}
+
+func TestCleanUpPeersReachesEveryOtherReplica(t *testing.T) {
+	var peers []*recordingReplica
+	var members []cluster.Member
+	for _, id := range []string{"atlantis-1", "atlantis-2"} {
+		rep := &recordingReplica{}
+		s := &clusterrpc.Server{Token: token, Local: newFakeRunner(), LocalClean: newFakeRunner(), Replica: rep, Jobs: jobs{}, JobsHandler: http.NotFoundHandler(), Logger: logging.NewNoopLogger(t)}
+		srv := httptest.NewServer(s.Handler())
+		t.Cleanup(srv.Close)
+		peers = append(peers, rep)
+		members = append(members, cluster.Member{Identity: id, Address: srv.URL})
+	}
+	owners := &dynOwners{self: "atlantis-0"}
+	owners.set(append(members, cluster.Member{Identity: "atlantis-0", Address: "http://127.0.0.1:1"})...)
+	r := &clusterrpc.Router{Owners: owners, Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient}, Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope}
+
+	r.CleanUpPeers(logging.NewNoopLogger(t), repo, models.PullRequest{Num: 9})
+	for _, p := range peers {
+		Equals(t, []int{9}, p.pulls)
+	}
+}

@@ -61,6 +61,56 @@ kubectl -n atlantis get lease atlantis-leader -o jsonpath='{.spec.holderIdentity
 Nothing written to the API server contains VCS credentials: clone URLs and
 pull request bodies are stripped before storing.
 
+## Plans and job logs
+
+By default each replica keeps its clones, plan files and job logs on its own
+volume:
+
+- applies are routed to the replica that made the plan;
+- live job output is proxied to the replica running the job;
+- when a pull request closes, every replica deletes its copies. A replica
+  that was down at the time removes them later: its janitor deletes the local
+  files of pulls that no longer have a `PullStatus` and were untouched for 24
+  hours.
+
+To make plans and completed job logs available to every replica, and keep
+them if a replica or its volume is lost, store them in object storage (S3 or
+any S3-compatible service):
+
+```yaml
+# server-side repo config (chart: externalStores.planStore / .logStore)
+external_stores:
+  plan_store:
+    type: s3
+    s3:
+      bucket: my-atlantis
+      region: eu-west-1
+      prefix: atlantis/plans
+      server_side_encryption: aws:kms   # AES256, aws:kms or aws:kms:dsse
+      kms_key_id: alias/atlantis        # optional, for aws:kms*
+  log_store:
+    type: s3
+    s3:
+      bucket: my-atlantis
+      region: eu-west-1
+      prefix: atlantis/job-logs
+      server_side_encryption: AES256
+```
+
+together with `--enable-external-stores`. Then:
+
+- applies run on the pull's owner and download the plan, and are refused if
+  the plan was made at another commit;
+- completed job logs are uploaded when the job finishes and can be opened
+  through any replica; running jobs still stream from the replica running
+  them;
+- both are deleted when the pull request closes.
+
+Plan files and job output can contain secrets: keep server-side encryption
+on, restrict the bucket to Atlantis's workload identity (for example IRSA via
+`serviceAccount.annotations`), and add a lifecycle rule to expire objects of
+pull requests that were never closed.
+
 ## Monitoring
 
 To expose metrics, keep the `metrics.prometheus` block in the chart's

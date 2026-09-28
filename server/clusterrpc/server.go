@@ -13,8 +13,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/runatlantis/atlantis/server/events"
+	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/logging"
 )
+
+// ReplicaCleaner removes this replica's local resources for a closed pull.
+type ReplicaCleaner interface {
+	CleanUpReplica(logger logging.SimpleLogging, repo models.Repo, pull models.PullRequest) error
+}
 
 // JobLookup reports whether this replica holds a job's output.
 type JobLookup interface {
@@ -26,7 +32,9 @@ type Server struct {
 	Token      string
 	Local      events.ContextCommandRunner
 	LocalClean events.PullCleaner
-	Jobs       JobLookup
+	// Replica handles replica-local cleanup broadcasts; optional.
+	Replica ReplicaCleaner
+	Jobs    JobLookup
 	// JobsHandler serves /jobs/{id} and /jobs/{id}/ws for proxied requests.
 	JobsHandler http.Handler
 	Logger      logging.SimpleLogging
@@ -70,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("POST "+commandsPath, s.auth(s.commands))
 	mux.HandleFunc("POST "+cleanupPath, s.auth(s.cleanup))
+	mux.HandleFunc("POST "+replicaCleanupPath, s.auth(s.cleanupReplica))
 	mux.HandleFunc("GET "+jobExistsPath+"{id}", s.auth(s.jobExists))
 	mux.HandleFunc("GET /jobs/", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		// Never proxy a proxied request again.
@@ -142,6 +151,23 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.LocalClean.CleanUpPull(s.Logger, req.Repo, req.Pull); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) cleanupReplica(w http.ResponseWriter, r *http.Request) {
+	if s.Replica == nil {
+		http.Error(w, "replica cleanup not supported", http.StatusNotImplemented)
+		return
+	}
+	var req cleanupRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.Replica.CleanUpReplica(s.Logger, req.Repo, req.Pull); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

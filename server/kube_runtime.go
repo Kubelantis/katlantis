@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -19,10 +20,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/runatlantis/atlantis/server/clusterrpc"
+	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/kube"
 	"github.com/runatlantis/atlantis/server/core/kube/cluster"
+	"github.com/runatlantis/atlantis/server/core/kube/janitor"
 	"github.com/runatlantis/atlantis/server/core/kube/kubedb"
 	"github.com/runatlantis/atlantis/server/core/kube/pulllock"
+	"github.com/runatlantis/atlantis/server/core/logstore"
+	"github.com/runatlantis/atlantis/server/core/planstore"
 	"github.com/runatlantis/atlantis/server/events"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/events/vcs"
@@ -54,6 +59,11 @@ type kubeRuntime struct {
 	// started is set once the cluster listener, membership and leader
 	// election are running.
 	started atomic.Bool
+
+	// replicaCleaner handles cleanup broadcasts for closed pulls.
+	replicaCleaner *events.ReplicaCleaner
+	// janitor removes local leftovers of pulls closed while this replica was down.
+	janitor *janitor.Janitor
 }
 
 func newKubeRuntime(userConfig UserConfig, logger logging.SimpleLogging, scope tally.Scope) (*kubeRuntime, error) {
@@ -140,17 +150,77 @@ func (k *kubeRuntime) workingDirLocker(local events.WorkingDirLocker, onLost fun
 	})
 }
 
-// router wraps the local command runner and pull cleaner so work is sent to
-// the owning replica.
-func (k *kubeRuntime) router(local events.ContextCommandRunner, localClean events.PullCleaner, vcsClient vcs.Client, plans clusterrpc.PlanHolders, sharedPlans bool, planHolderWait time.Duration) *clusterrpc.Router {
-	return &clusterrpc.Router{
-		Plans: plans, SharedPlans: sharedPlans, PlanHolderWait: planHolderWait,
-		Local: local, LocalClean: localClean, Owners: k.membership,
+// kubeDeps are the server components the Kubernetes runtime wires together.
+type kubeDeps struct {
+	CommandRunner       events.ContextCommandRunner
+	PullCleaner         events.PullCleaner
+	PullClosedExecutor  *events.PullClosedExecutor
+	VCSClient           vcs.Client
+	Database            db.Database
+	WorkingDir          events.WorkingDir
+	WorkingDirLocker    events.WorkingDirLocker
+	JobOutput           jobs.ProjectCommandOutputHandler
+	CancellationTracker events.CancellationTracker
+	// LocalLogs is the replica's own job log files; nil when logs are off.
+	LocalLogs *logstore.FileLogStore
+	DataDir   string
+	JobLogDir string
+	// SharedPlans is true when plans are in an external store.
+	SharedPlans    bool
+	PlanHolderWait time.Duration
+}
+
+// wire connects the cluster runtime to the server: it returns the router
+// that sends commands to the right replica, makes pull closes clean every
+// replica, and prepares the replica's janitor. Call before start.
+func (k *kubeRuntime) wire(d kubeDeps) *clusterrpc.Router {
+	plans, _ := d.Database.(clusterrpc.PlanHolders)
+	router := &clusterrpc.Router{
+		Local: d.CommandRunner, LocalClean: d.PullCleaner, Owners: k.membership,
 		Client: k.rpcClient, Logger: k.logger, Scope: k.scope.SubScope("routing"),
+		Plans: plans, SharedPlans: d.SharedPlans, PlanHolderWait: d.PlanHolderWait,
 		Notify: func(repo models.Repo, pullNum int, msg string) error {
-			return vcsClient.CreateComment(k.logger, repo, pullNum, msg, "")
+			return d.VCSClient.CreateComment(k.logger, repo, pullNum, msg, "")
 		},
 	}
+	// Closing a pull also removes the copies other replicas hold.
+	d.PullClosedExecutor.Peers = router
+	k.replicaCleaner = &events.ReplicaCleaner{WorkingDir: d.WorkingDir, CancellationTracker: d.CancellationTracker}
+	if pj, ok := d.JobOutput.(events.PullJobsCleaner); ok {
+		k.replicaCleaner.Jobs = pj
+	}
+	k.janitor = k.newJanitor(d)
+	return router
+}
+
+// newJanitor returns nil when the database cannot tell whether a pull exists.
+func (k *kubeRuntime) newJanitor(d kubeDeps) *janitor.Janitor {
+	pulls, ok := d.Database.(interface {
+		PullStatusExists(repoFullName string, pullNum int) (bool, error)
+	})
+	if !ok {
+		return nil
+	}
+	cfg := janitor.Config{
+		ReposDir:   filepath.Join(d.DataDir, planstore.ReposDir),
+		PullExists: pulls.PullStatusExists,
+		Logger:     k.logger,
+		RemoveClones: func(repoFullName string, pullNum int) error {
+			repo := models.Repo{FullName: repoFullName}
+			return d.WorkingDir.Delete(k.logger, repo, models.PullRequest{Num: pullNum, BaseRepo: repo})
+		},
+		RemoveLogs: func(string, int) error { return nil },
+	}
+	if holder, ok := d.WorkingDirLocker.(interface{ Holds(string, int) bool }); ok {
+		cfg.Busy = holder.Holds
+	}
+	if d.LocalLogs != nil {
+		cfg.LogDir = d.JobLogDir
+		cfg.RemoveLogs = func(repoFullName string, pullNum int) error {
+			return d.LocalLogs.DeletePull(logstore.Pull{RepoFullName: repoFullName, Num: pullNum})
+		}
+	}
+	return janitor.New(cfg)
 }
 
 func (k *kubeRuntime) jobProxy(output jobs.ProjectCommandOutputHandler) *clusterrpc.JobProxy {
@@ -167,6 +237,9 @@ func (k *kubeRuntime) start(s *Server, local events.ContextCommandRunner, localC
 		Jobs: s.ProjectCmdOutputHandler, JobsHandler: jobsRouter,
 		Logger: k.logger, Drain: s.Drainer,
 	}
+	if k.replicaCleaner != nil {
+		internal.Replica = k.replicaCleaner
+	}
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", k.port))
 	if err != nil {
 		return fmt.Errorf("listening on cluster port: %w", err)
@@ -181,6 +254,9 @@ func (k *kubeRuntime) start(s *Server, local events.ContextCommandRunner, localC
 		}
 	})
 	k.wg.Go(func() { k.membership.Run(ctx) })
+	if k.janitor != nil {
+		k.wg.Go(func() { k.janitor.Run(ctx) })
+	}
 	k.wg.Go(func() {
 		if err := k.leader.Run(ctx); err != nil {
 			k.logger.Err("leader election: %s", err)

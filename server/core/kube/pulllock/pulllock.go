@@ -105,6 +105,15 @@ func (l *Locker) markLost(h *held, reason error) {
 	}
 }
 
+// Holds reports whether this replica currently holds a trusted lease for
+// the pull, i.e. a command for it is running here.
+func (l *Locker) Holds(repoFullName string, pullNum int) bool {
+	l.mu.Lock()
+	h, ok := l.held[pullKey(repoFullName, pullNum)]
+	l.mu.Unlock()
+	return ok && !l.stale(h)
+}
+
 // LostPullLock reports whether this replica held the pull's lease and can no
 // longer trust it. It is false when the pull is not locked here at all.
 func (l *Locker) LostPullLock(repoFullName string, pullNum int) bool {

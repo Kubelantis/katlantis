@@ -49,6 +49,46 @@ type PullClosedExecutor struct {
 	LogStreamResourceCleaner ResourceCleaner
 	CancellationTracker      CancellationTracker
 	PlanStore                runtime.PlanStore
+	// Peers, if set, removes the pull's replica-local resources on every
+	// other replica. With several replicas a pull's clones and job output can
+	// be spread across them (e.g. plans made on one, applies on another).
+	Peers PeerCleaner
+}
+
+// PullJobsCleaner drops all job output of a pull request, whatever project
+// it belongs to. It is implemented by jobs.AsyncProjectCommandOutputHandler.
+type PullJobsCleaner interface {
+	CleanUpPullJobs(repoFullName string, pullNum int)
+}
+
+// PeerCleaner asks other replicas to clean up a closed pull's local
+// resources. It is best effort: replicas that miss it are cleaned by their
+// janitor.
+type PeerCleaner interface {
+	CleanUpPeers(logger logging.SimpleLogging, repo models.Repo, pull models.PullRequest)
+}
+
+// ReplicaCleaner removes the resources a replica holds locally for a closed
+// pull request: its clones and its job output. Shared state (locks, pull
+// status, external plans) is left to PullClosedExecutor.
+type ReplicaCleaner struct {
+	WorkingDir          WorkingDir
+	Jobs                PullJobsCleaner
+	CancellationTracker CancellationTracker
+}
+
+// CleanUpReplica implements the replica-local part of closing a pull.
+func (c *ReplicaCleaner) CleanUpReplica(logger logging.SimpleLogging, repo models.Repo, pull models.PullRequest) error {
+	if c.Jobs != nil {
+		c.Jobs.CleanUpPullJobs(pull.BaseRepo.FullName, pull.Num)
+	}
+	if c.CancellationTracker != nil {
+		c.CancellationTracker.Clear(pull)
+	}
+	if err := c.WorkingDir.Delete(logger, repo, pull); err != nil {
+		return fmt.Errorf("cleaning workspace: %w", err)
+	}
+	return nil
 }
 
 type templatedProject struct {
@@ -79,7 +119,10 @@ func (p *PullClosedExecutor) CleanUpPull(logger logging.SimpleLogging, repo mode
 		logger.Err("retrieving pull status: %s", err)
 	}
 
-	if pullStatus != nil {
+	if pj, ok := p.LogStreamResourceCleaner.(PullJobsCleaner); ok {
+		// One pass over every job of the pull, persisted logs included.
+		pj.CleanUpPullJobs(pull.BaseRepo.FullName, pull.Num)
+	} else if pullStatus != nil {
 		for _, project := range pullStatus.Projects {
 			jobContext := jobs.PullInfo{
 				PullNum:      pull.Num,
@@ -95,7 +138,7 @@ func (p *PullClosedExecutor) CleanUpPull(logger logging.SimpleLogging, repo mode
 
 	// Workflow hook jobs are keyed by the pull request alone, and its
 	// persisted job logs must go even when no pull status was recorded.
-	if p.LogStreamResourceCleaner != nil {
+	if _, ok := p.LogStreamResourceCleaner.(PullJobsCleaner); !ok && p.LogStreamResourceCleaner != nil {
 		p.LogStreamResourceCleaner.CleanUp(jobs.PullInfo{
 			PullNum:      pull.Num,
 			Repo:         pull.BaseRepo.Name,
@@ -106,6 +149,9 @@ func (p *PullClosedExecutor) CleanUpPull(logger logging.SimpleLogging, repo mode
 	var workspaceErr error
 	if err := p.WorkingDir.Delete(logger, repo, pull); err != nil {
 		workspaceErr = fmt.Errorf("cleaning workspace: %w", err)
+	}
+	if p.Peers != nil {
+		p.Peers.CleanUpPeers(logger, repo, pull)
 	}
 
 	// Always attempt external plan cleanup even if workspace deletion failed,

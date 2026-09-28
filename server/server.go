@@ -34,7 +34,6 @@ import (
 	prometheus "github.com/uber-go/tally/v4/prometheus"
 	"github.com/urfave/negroni/v3"
 
-	"github.com/runatlantis/atlantis/server/clusterrpc"
 	"github.com/runatlantis/atlantis/server/core/boltdb"
 	cfg "github.com/runatlantis/atlantis/server/core/config"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
@@ -470,23 +469,23 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		Underlying:                underlyingRouter,
 	}
 
+	if err := validateExternalStores(userConfig, globalCfg); err != nil {
+		return nil, err
+	}
 	var logStore logstore.LogStore = logstore.NoopLogStore{}
+	var localLogStore *logstore.FileLogStore
 	var projectCmdOutputHandler jobs.ProjectCommandOutputHandler
 
 	if userConfig.TFEToken != "" && !userConfig.TFELocalExecutionMode {
 		// When TFE is enabled and using remote execution mode log streaming is not necessary.
 		projectCmdOutputHandler = &jobs.NoopProjectOutputHandler{}
 	} else {
-		// Job logs outlive a restart on disk until their pull request closes.
-		jobLogDir := userConfig.JobLogDir
-		if jobLogDir == "" {
-			jobLogDir = filepath.Join(userConfig.DataDir, logstore.DirName)
-		}
-		fileLogStore, err := logstore.NewFileLogStore(jobLogDir, logstore.DefaultFlushInterval, logger)
+		// Job logs outlive a restart on disk until their pull request closes,
+		// and are archived to object storage when configured.
+		logStore, localLogStore, err = newLogStore(userConfig, globalCfg, logger)
 		if err != nil {
 			return nil, err
 		}
-		logStore = fileLogStore
 		projectCmdOutput := make(chan *jobs.ProjectCmdOutputLine)
 		projectCmdOutputHandler = jobs.NewAsyncProjectCommandOutputHandler(
 			projectCmdOutput,
@@ -748,55 +747,23 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		CommitStatusUpdater: commitStatusUpdater,
 		Router:              router,
 	}
-	var planStore runtime.PlanStore
-	if userConfig.EnableExternalStores {
-		psCfg := globalCfg.ExternalStores.PlanStore
-		if psCfg.Type == "" {
-			return nil, fmt.Errorf("--enable-external-stores is set but no external_stores.plan_store.type is configured in the server-side repo config")
-		}
-		switch psCfg.Type {
-		case "s3":
-			logger.Info("initializing S3 plan store (bucket=%s, region=%s)", psCfg.S3.Bucket, psCfg.S3.Region)
-			planStore, err = runtime.NewS3PlanStore(runtime.S3PlanStoreConfig{
-				Bucket:         psCfg.S3.Bucket,
-				Region:         psCfg.S3.Region,
-				Prefix:         psCfg.S3.Prefix,
-				Endpoint:       psCfg.S3.Endpoint,
-				ForcePathStyle: psCfg.S3.ForcePathStyle,
-				Profile:        psCfg.S3.Profile,
-			}, logger)
-			if err != nil {
-				return nil, fmt.Errorf("initializing S3 plan store: %w", err)
-			}
-		default:
-			return nil, fmt.Errorf("unsupported plan store type %q", psCfg.Type)
-		}
-	} else {
-		local := &runtime.LocalPlanStore{}
-		// A plan store dir outside the data dir survives the loss of a
-		// checkout, so plans there can be recovered after a restart even
-		// without an external store.
-		if userConfig.SharePlanDir != "" && filepath.Clean(userConfig.SharePlanDir) != filepath.Clean(userConfig.DataDir) {
-			local.SeparatePlanDir = userConfig.SharePlanDir
-		}
-		planStore = local
+	planStore, err := newPlanStore(userConfig, globalCfg, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	deleteLockCommand.PlanStore = planStore
 
-	pullClosedExecutor := events.NewInstrumentedPullClosedExecutor(
-		statsScope,
-		logger,
-		&events.PullClosedExecutor{
-			Locker:                   lockingClient,
-			WorkingDir:               workingDir,
-			Database:                 database,
-			PullClosedTemplate:       &events.PullClosedEventTemplate{},
-			LogStreamResourceCleaner: projectCmdOutputHandler,
-			VCSClient:                vcsClient,
-			PlanStore:                planStore,
-		},
-	)
+	basePullClosedExecutor := &events.PullClosedExecutor{
+		Locker:                   lockingClient,
+		WorkingDir:               workingDir,
+		Database:                 database,
+		PullClosedTemplate:       &events.PullClosedEventTemplate{},
+		LogStreamResourceCleaner: projectCmdOutputHandler,
+		VCSClient:                vcsClient,
+		PlanStore:                planStore,
+	}
+	pullClosedExecutor := events.NewInstrumentedPullClosedExecutor(statsScope, logger, basePullClosedExecutor)
 
 	projectFinder := &events.DefaultProjectFinder{}
 	projectCommandBuilder := events.NewInstrumentedProjectCommandBuilder(
@@ -1194,9 +1161,22 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	var eventsCommandRunner events.CommandRunner = commandRunner
 	var eventsPullCleaner events.PullCleaner = pullClosedExecutor
 	if kubeRT != nil {
-		plans, _ := database.(clusterrpc.PlanHolders)
-		router := kubeRT.router(commandRunner, pullClosedExecutor, vcsClient, plans,
-			userConfig.EnableExternalStores, time.Duration(userConfig.ClusterPlanHolderWaitSeconds)*time.Second)
+		router := kubeRT.wire(kubeDeps{
+			CommandRunner:       commandRunner,
+			PullCleaner:         pullClosedExecutor,
+			PullClosedExecutor:  basePullClosedExecutor,
+			VCSClient:           vcsClient,
+			Database:            database,
+			WorkingDir:          workingDir,
+			WorkingDirLocker:    workingDirLocker,
+			JobOutput:           projectCmdOutputHandler,
+			CancellationTracker: cancellationTracker,
+			LocalLogs:           localLogStore,
+			DataDir:             userConfig.DataDir,
+			JobLogDir:           jobLogDir(userConfig),
+			SharedPlans:         externalPlanStore(userConfig, globalCfg),
+			PlanHolderWait:      time.Duration(userConfig.ClusterPlanHolderWaitSeconds) * time.Second,
+		})
 		eventsCommandRunner, eventsPullCleaner = router, router
 	}
 	eventsController := &events_controllers.VCSEventsController{
