@@ -16,6 +16,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
@@ -25,6 +26,7 @@ import (
 var (
 	once    sync.Once
 	shared  client.Client
+	restCfg *rest.Config
 	initErr error
 	nsSeq   atomic.Int64
 )
@@ -45,6 +47,7 @@ func Client(t testing.TB) (client.Client, string) {
 			ErrorIfCRDPathMissing: true,
 		}
 		cfg, err := env.Start()
+		restCfg = cfg
 		if err != nil {
 			initErr = fmt.Errorf("starting envtest: %w", err)
 			return
@@ -65,3 +68,6 @@ func Client(t testing.TB) (client.Client, string) {
 	}
 	return shared, ns
 }
+
+// RestConfig returns the rest config of the shared API server. Call Client first.
+func RestConfig() *rest.Config { return rest.CopyConfig(restCfg) }

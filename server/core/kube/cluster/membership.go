@@ -1,0 +1,208 @@
+// Package cluster coordinates Atlantis replicas on Kubernetes:
+//
+//   - Membership: every replica holds a member Lease that it renews. The set
+//     of live members is refreshed on the same interval.
+//   - Ownership: each pull request is owned by exactly one live, non-draining
+//     member, chosen by rendezvous hashing. Commands for a pull are routed to
+//     its owner so clones, live job output, and cancellation stay on one pod.
+//     When membership changes only the pulls of the affected member move.
+//   - Leader election: one replica runs cluster-wide housekeeping.
+package cluster
+
+import (
+	"context"
+	"hash/fnv"
+	"slices"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	coordinationv1 "k8s.io/api/coordination/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/runatlantis/atlantis/server/core/kube"
+	"github.com/runatlantis/atlantis/server/logging"
+)
+
+const (
+	memberPrefix       = "member"
+	annotationDraining = "atlantis.runatlantis.io/draining"
+)
+
+// Member is a live Atlantis replica.
+type Member struct {
+	Identity string
+	// Address is the base URL of the member's internal cluster listener.
+	Address  string
+	Draining bool
+}
+
+// MembershipConfig configures Membership.
+type MembershipConfig struct {
+	Client    client.Client
+	Namespace string
+	Identity  string
+	// Address is this replica's internal base URL, e.g. http://10.0.0.5:4142.
+	Address string
+	// LeaseDuration is how long a member stays live without renewing.
+	LeaseDuration time.Duration
+	// RenewInterval is how often the lease is renewed and members refreshed.
+	RenewInterval time.Duration
+	Logger        logging.SimpleLogging
+	// OnChange is called with the new member list whenever it changes.
+	OnChange func([]Member)
+}
+
+// Membership maintains this replica's member Lease and the live member set.
+type Membership struct {
+	cfg      MembershipConfig
+	lease    *TimedLease
+	draining atomic.Bool
+	// tickMu serializes renewals from Run and SetDraining.
+	tickMu sync.Mutex
+
+	mu      sync.RWMutex
+	members []Member
+	// synced is true once the member list has been loaded at least once.
+	synced bool
+}
+
+// NewMembership returns a Membership. Call Run to start it.
+func NewMembership(cfg MembershipConfig) *Membership {
+	if cfg.LeaseDuration == 0 {
+		cfg.LeaseDuration = 15 * time.Second
+	}
+	if cfg.RenewInterval == 0 {
+		cfg.RenewInterval = cfg.LeaseDuration / 3
+	}
+	m := &Membership{cfg: cfg}
+	m.lease = &TimedLease{
+		Client:    cfg.Client,
+		Namespace: cfg.Namespace,
+		Name:      kube.Name(memberPrefix, cfg.Identity),
+		Holder:    cfg.Identity,
+		Duration:  cfg.LeaseDuration,
+		Labels:    kube.Labels(kube.TypeMember, nil),
+	}
+	return m
+}
+
+// Identity returns this replica's identity.
+func (m *Membership) Identity() string { return m.cfg.Identity }
+
+// Run renews the member lease and refreshes members until ctx is done, then
+// releases the lease so other replicas take over this pod's pulls at once.
+func (m *Membership) Run(ctx context.Context) {
+	m.tick(ctx)
+	t := time.NewTicker(m.cfg.RenewInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := m.lease.Release(rctx); err != nil {
+				m.cfg.Logger.Warn("releasing member lease: %s", err)
+			}
+			return
+		case <-t.C:
+			m.tick(ctx)
+		}
+	}
+}
+
+func (m *Membership) tick(ctx context.Context) {
+	m.tickMu.Lock()
+	defer m.tickMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, m.cfg.RenewInterval)
+	defer cancel()
+	m.lease.Annotations = map[string]string{
+		kube.AnnotationAddress: m.cfg.Address,
+		annotationDraining:     strconv.FormatBool(m.draining.Load()),
+	}
+	if err := m.lease.Acquire(ctx); err != nil {
+		m.cfg.Logger.Warn("renewing member lease: %s", err)
+	}
+	if err := m.refresh(ctx); err != nil {
+		m.cfg.Logger.Warn("listing cluster members: %s", err)
+	}
+}
+
+func (m *Membership) refresh(ctx context.Context) error {
+	var list coordinationv1.LeaseList
+	if err := m.cfg.Client.List(ctx, &list, client.InNamespace(m.cfg.Namespace), client.MatchingLabels(kube.Labels(kube.TypeMember, nil))); err != nil {
+		return err
+	}
+	now := time.Now()
+	var members []Member
+	for i := range list.Items {
+		l := &list.Items[i]
+		if Expired(l, now) {
+			continue
+		}
+		draining, _ := strconv.ParseBool(l.Annotations[annotationDraining])
+		members = append(members, Member{Identity: Holder(l), Address: l.Annotations[kube.AnnotationAddress], Draining: draining})
+	}
+	slices.SortFunc(members, func(a, b Member) int {
+		if a.Identity < b.Identity {
+			return -1
+		}
+		if a.Identity > b.Identity {
+			return 1
+		}
+		return 0
+	})
+
+	m.mu.Lock()
+	changed := !m.synced || !slices.Equal(m.members, members)
+	m.members, m.synced = members, true
+	m.mu.Unlock()
+	if changed && m.cfg.OnChange != nil {
+		m.cfg.OnChange(members)
+	}
+	return nil
+}
+
+// SetDraining marks this replica as draining: it stays a member (its running
+// jobs remain reachable) but stops owning pulls. It is published immediately.
+func (m *Membership) SetDraining(ctx context.Context) {
+	m.draining.Store(true)
+	m.tick(ctx)
+}
+
+// Members returns the live members, sorted by identity.
+func (m *Membership) Members() []Member {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return slices.Clone(m.members)
+}
+
+// Owner returns the member that owns key. ok is false when no eligible member
+// is known (e.g. the API server is unreachable at startup); callers should
+// then handle the work locally.
+func (m *Membership) Owner(key string) (owner Member, ok bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return rendezvous(m.members, key)
+}
+
+// rendezvous implements highest-random-weight hashing over non-draining members.
+func rendezvous(members []Member, key string) (Member, bool) {
+	var best Member
+	var bestScore uint64
+	found := false
+	for _, mem := range members {
+		if mem.Draining {
+			continue
+		}
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(mem.Identity))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(key))
+		if s := h.Sum64(); !found || s > bestScore {
+			best, bestScore, found = mem, s, true
+		}
+	}
+	return best, found
+}
