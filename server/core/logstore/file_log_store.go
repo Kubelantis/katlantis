@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -70,6 +71,17 @@ type FileLogStore struct {
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// index maps a job ID to its log file. It is loaded from disk once, on
+	// first use, and kept current by create and DeletePull, so lookups do not
+	// walk the directory tree.
+	indexOnce sync.Once
+	indexMu   sync.RWMutex
+	index     map[string]string
+
+	// onComplete, if set, is called after a completed job's log file has been
+	// fully written, synced and closed.
+	onComplete func(pull Pull, jobID, path string)
 }
 
 // pendingLog is a job's output not yet appended to its file.
@@ -212,6 +224,7 @@ func (s *FileLogStore) DeletePull(pull Pull) error {
 		}
 	}
 
+	s.indexDeleteUnder(dir)
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("deleting job logs for %s#%d: %w", pull.RepoFullName, pull.Num, err)
 	}
@@ -349,8 +362,15 @@ func (s *FileLogStore) flushJob(jobID string) {
 	// Write may have added more output while the lock was released; the job
 	// is only done once nothing is left.
 	if p.complete && p.buf.Len() == 0 && p.dropped == 0 {
+		var path string
+		if p.f != nil {
+			path = p.f.Name()
+		}
 		s.closeFile(p)
 		delete(s.jobs, jobID)
+		if path != "" && s.onComplete != nil {
+			s.onComplete(p.pull, jobID, path)
+		}
 	}
 }
 
@@ -386,8 +406,14 @@ func (s *FileLogStore) create(pull Pull, jobID string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	path := filepath.Join(dir, jobID+".log")
 	// #nosec G304 -- dir is built from an escaped repo name and a pull number, and jobID is validated by ValidJobID.
-	return os.OpenFile(filepath.Join(dir, jobID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	s.indexPut(jobID, path)
+	return f, nil
 }
 
 // pullDir is where pull's job logs live. The repo full name is path-escaped
@@ -407,28 +433,61 @@ func (s *FileLogStore) find(jobID string) (string, error) {
 	if !ValidJobID(jobID) {
 		return "", nil
 	}
-	repos, err := os.ReadDir(s.root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
+	if err := s.loadIndex(); err != nil {
 		return "", err
 	}
-	name := jobID + ".log"
-	for _, repo := range repos {
-		if !repo.IsDir() {
-			continue
-		}
-		pulls, err := os.ReadDir(filepath.Join(s.root, repo.Name()))
-		if err != nil {
-			continue // removed by a concurrent DeletePull
-		}
-		for _, pull := range pulls {
-			path := filepath.Join(s.root, repo.Name(), pull.Name(), name)
-			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-				return path, nil
+	s.indexMu.RLock()
+	path := s.index[jobID]
+	s.indexMu.RUnlock()
+	return path, nil
+}
+
+// loadIndex scans root once for existing log files (from before a restart).
+func (s *FileLogStore) loadIndex() error {
+	var err error
+	s.indexOnce.Do(func() {
+		index := map[string]string{}
+		err = filepath.WalkDir(s.root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				if os.IsNotExist(walkErr) {
+					return nil // removed by a concurrent DeletePull
+				}
+				return walkErr
 			}
+			if d.Type().IsRegular() && strings.HasSuffix(d.Name(), ".log") {
+				if id := strings.TrimSuffix(d.Name(), ".log"); ValidJobID(id) {
+					index[id] = path
+				}
+			}
+			return nil
+		})
+		s.indexMu.Lock()
+		for id, path := range s.index { // entries created while scanning
+			index[id] = path
+		}
+		s.index = index
+		s.indexMu.Unlock()
+	})
+	return err
+}
+
+func (s *FileLogStore) indexPut(jobID, path string) {
+	s.indexMu.Lock()
+	if s.index == nil {
+		s.index = map[string]string{}
+	}
+	s.index[jobID] = path
+	s.indexMu.Unlock()
+}
+
+// indexDeleteUnder drops every entry whose file is under dir.
+func (s *FileLogStore) indexDeleteUnder(dir string) {
+	prefix := dir + string(filepath.Separator)
+	s.indexMu.Lock()
+	for id, path := range s.index {
+		if strings.HasPrefix(path, prefix) {
+			delete(s.index, id)
 		}
 	}
-	return "", nil
+	s.indexMu.Unlock()
 }

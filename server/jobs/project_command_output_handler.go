@@ -399,6 +399,33 @@ func (p *AsyncProjectCommandOutputHandler) CleanUp(pullInfo PullInfo) {
 	}
 }
 
+// CleanUpPullJobs drops the output of every job of a pull request, in
+// memory and persisted, whatever project or workflow hook it belongs to. It
+// needs no project list, so a replica can clean up a pull it only partly ran.
+func (p *AsyncProjectCommandOutputHandler) CleanUpPullJobs(repoFullName string, pullNum int) {
+	if err := p.logStore.DeletePull(logstore.Pull{RepoFullName: repoFullName, Num: pullNum}); err != nil {
+		p.logger.Warn("deleting persisted job logs for %s#%d: %s", repoFullName, pullNum, err)
+	}
+	p.pullToJobMapping.Range(func(key, value any) bool {
+		info := key.(PullInfo)
+		if info.RepoFullName != repoFullName || info.PullNum != pullNum {
+			return true
+		}
+		value.(*sync.Map).Range(func(k, _ any) bool {
+			jobID := k.(string)
+			p.projectOutputBuffersLock.Lock()
+			delete(p.projectOutputBuffers, jobID)
+			p.projectOutputBuffersLock.Unlock()
+			p.receiverBuffersLock.Lock()
+			delete(p.receiverBuffers, jobID)
+			p.receiverBuffersLock.Unlock()
+			return true
+		})
+		p.pullToJobMapping.Delete(key)
+		return true
+	})
+}
+
 // NoopProjectOutputHandler is a mock that doesn't do anything
 type NoopProjectOutputHandler struct{}
 
@@ -414,6 +441,9 @@ func (p *NoopProjectOutputHandler) Deregister(_ string, _ chan string) {}
 
 func (p *NoopProjectOutputHandler) Handle() {
 }
+
+// CleanUpPullJobs does nothing.
+func (p *NoopProjectOutputHandler) CleanUpPullJobs(string, int) {}
 
 func (p *NoopProjectOutputHandler) CleanUp(_ PullInfo) {
 }
