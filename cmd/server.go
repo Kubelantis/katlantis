@@ -116,6 +116,18 @@ const (
 	HidePrevPlanComments             = "hide-prev-plan-comments"
 	QuietPolicyChecks                = "quiet-policy-checks"
 	LockingDBType                    = "locking-db-type"
+	KubernetesNamespaceFlag          = "kubernetes-namespace"
+	KubernetesIdentityFlag           = "kubernetes-identity"
+	ClusterAddressFlag               = "cluster-address"
+	ClusterPortFlag                  = "cluster-port"
+	ClusterTokenFlag                 = "cluster-token" // nolint: gosec
+	TracingEnabledFlag               = "tracing-enabled"
+	PlanRiskEnabledFlag              = "plan-risk-enabled"
+	PlanRiskFailureTierFlag          = "plan-risk-failure-tier"
+	PlanRiskMaxUnapprovedTierFlag    = "plan-risk-max-unapproved-tier"
+	TypeSafeAPIKeyFlag               = "typesafe-api-key" // nolint: gosec
+	TypeSafeAPIURLFlag               = "typesafe-api-url"
+	TypeSafeModelFlag                = "typesafe-model"
 	LogLevelFlag                     = "log-level"
 	MarkdownTemplateOverridesDirFlag = "markdown-template-overrides-dir"
 	MaxCommentsPerCommand            = "max-comments-per-command"
@@ -189,6 +201,11 @@ const (
 	DefaultGiteaPageSize                = 30
 	DefaultGitlabHostname               = "gitlab.com"
 	DefaultLockingDBType                = "boltdb"
+	DefaultClusterPort                  = 4142
+	DefaultPlanRiskFailureTier          = "high"
+	DefaultPlanRiskMaxUnapprovedTier    = "low"
+	DefaultTypeSafeAPIURL               = "https://api.typesafe.ai"
+	DefaultTypeSafeModel                = "jev-1.13.0"
 	DefaultLanguage                     = i18n.DefaultLanguage
 	DefaultLogLevel                     = "info"
 	DefaultIgnoreVCSStatusNames         = ""
@@ -421,8 +438,41 @@ var stringFlags = map[string]stringFlag{
 		description: "Secret used to validate requests made to the /api/* endpoints",
 	},
 	LockingDBType: {
-		description:  "The locking database type to use for storing plan and apply locks.",
+		description: "The locking database type to use for storing plan and apply locks: boltdb, redis, or kubernetes." +
+			" kubernetes stores state in Leases and PullStatus resources and enables multi-replica operation.",
 		defaultValue: DefaultLockingDBType,
+	},
+	KubernetesNamespaceFlag: {
+		description: "Namespace for Atlantis state when --" + LockingDBType + "=kubernetes. Defaults to $POD_NAMESPACE or the service account namespace.",
+	},
+	KubernetesIdentityFlag: {
+		description: "Unique identity of this replica when --" + LockingDBType + "=kubernetes. Defaults to $POD_NAME or the hostname.",
+	},
+	ClusterAddressFlag: {
+		description: "URL other replicas use to reach this replica's cluster port. Defaults to http://$POD_IP:<cluster-port>.",
+	},
+	ClusterTokenFlag: {
+		description: "Shared secret authenticating calls between replicas. Required when --" + LockingDBType + "=kubernetes." +
+			" Should be specified via the ATLANTIS_CLUSTER_TOKEN environment variable.",
+	},
+	PlanRiskFailureTierFlag: {
+		description:  "Risk tier assigned when a plan cannot be assessed: low, medium, high, or critical.",
+		defaultValue: DefaultPlanRiskFailureTier,
+	},
+	PlanRiskMaxUnapprovedTierFlag: {
+		description:  "Highest plan risk tier that the plan_risk apply requirement allows without pull request approval.",
+		defaultValue: DefaultPlanRiskMaxUnapprovedTier,
+	},
+	TypeSafeAPIKeyFlag: {
+		description: "TypeSafe API key used for plan risk assessment. Should be specified via the ATLANTIS_TYPESAFE_API_KEY environment variable.",
+	},
+	TypeSafeAPIURLFlag: {
+		description:  "TypeSafe API base URL.",
+		defaultValue: DefaultTypeSafeAPIURL,
+	},
+	TypeSafeModelFlag: {
+		description:  "TypeSafe model used for plan risk assessment. Pin a version so risk thresholds stay stable.",
+		defaultValue: DefaultTypeSafeModel,
 	},
 	LogLevelFlag: {
 		description:  "Log level. Either debug, info, warn, or error.",
@@ -543,6 +593,14 @@ var stringFlags = map[string]stringFlag{
 }
 
 var boolFlags = map[string]boolFlag{
+	TracingEnabledFlag: {
+		description:  "Export OpenTelemetry traces over OTLP. Configure the exporter with the standard OTEL_* environment variables.",
+		defaultValue: false,
+	},
+	PlanRiskEnabledFlag: {
+		description:  "Assess the risk of every plan with TypeSafe and enable the plan_risk apply requirement. Requires --" + TypeSafeAPIKeyFlag + ".",
+		defaultValue: false,
+	},
 	AllowForkPRsFlag: {
 		description:  "Allow Atlantis to run on pull requests from forks. A security issue for public repos.",
 		defaultValue: false,
@@ -714,6 +772,10 @@ var boolFlags = map[string]boolFlag{
 	},
 }
 var intFlags = map[string]intFlag{
+	ClusterPortFlag: {
+		description:  "Port of the internal listener used for traffic between replicas when --" + LockingDBType + "=kubernetes. Do not expose it outside the cluster.",
+		defaultValue: DefaultClusterPort,
+	},
 	CheckoutDepthFlag: {
 		description: fmt.Sprintf("Used only if --%s=%s.", CheckoutStrategyFlag, CheckoutStrategyMerge) +
 			" How many commits to include in each of base and feature branches when cloning repository." +
@@ -1025,6 +1087,21 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	if c.ExecutableName == "" {
 		c.ExecutableName = DefaultExecutableName
 	}
+	if c.ClusterPort == 0 {
+		c.ClusterPort = DefaultClusterPort
+	}
+	if c.PlanRiskFailureTier == "" {
+		c.PlanRiskFailureTier = DefaultPlanRiskFailureTier
+	}
+	if c.PlanRiskMaxUnapprovedTier == "" {
+		c.PlanRiskMaxUnapprovedTier = DefaultPlanRiskMaxUnapprovedTier
+	}
+	if c.TypeSafeAPIURL == "" {
+		c.TypeSafeAPIURL = DefaultTypeSafeAPIURL
+	}
+	if c.TypeSafeModel == "" {
+		c.TypeSafeModel = DefaultTypeSafeModel
+	}
 	if c.LockingDBType == "" {
 		c.LockingDBType = DefaultLockingDBType
 	}
@@ -1197,6 +1274,30 @@ func (s *ServerCmd) validate(userConfig server.UserConfig) error {
 
 	if userConfig.TFEHostname != DefaultTFEHostname && userConfig.TFEToken == "" {
 		return fmt.Errorf("if setting --%s, must set --%s", TFEHostnameFlag, TFETokenFlag)
+	}
+
+	switch userConfig.LockingDBType {
+	case "boltdb", "redis":
+	case "kubernetes":
+		if userConfig.ClusterToken == "" {
+			return fmt.Errorf("--%s must be set when --%s=kubernetes", ClusterTokenFlag, LockingDBType)
+		}
+		if userConfig.ClusterPort == userConfig.Port {
+			return fmt.Errorf("--%s must differ from --%s", ClusterPortFlag, PortFlag)
+		}
+	default:
+		return fmt.Errorf("invalid --%s %q: must be one of boltdb, redis, kubernetes", LockingDBType, userConfig.LockingDBType)
+	}
+
+	validTiers := map[string]bool{"low": true, "medium": true, "high": true, "critical": true}
+	if !validTiers[userConfig.PlanRiskFailureTier] {
+		return fmt.Errorf("invalid --%s %q: must be one of low, medium, high, critical", PlanRiskFailureTierFlag, userConfig.PlanRiskFailureTier)
+	}
+	if !validTiers[userConfig.PlanRiskMaxUnapprovedTier] {
+		return fmt.Errorf("invalid --%s %q: must be one of low, medium, high, critical", PlanRiskMaxUnapprovedTierFlag, userConfig.PlanRiskMaxUnapprovedTier)
+	}
+	if userConfig.PlanRiskEnabled && userConfig.TypeSafeAPIKey == "" {
+		return fmt.Errorf("--%s must be set when --%s is enabled", TypeSafeAPIKeyFlag, PlanRiskEnabledFlag)
 	}
 
 	if userConfig.RedisClusterAddresses != "" {

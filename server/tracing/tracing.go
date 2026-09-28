@@ -31,8 +31,6 @@ type Config struct {
 	// Identity and Namespace are recorded as k8s.pod.name / k8s.namespace.name.
 	Identity  string
 	Namespace string
-	// SampleRatio is the fraction of new traces sampled; parents are honored.
-	SampleRatio float64
 }
 
 // Setup installs the global tracer provider and propagator. The returned
@@ -60,14 +58,11 @@ func Setup(ctx context.Context, cfg Config) (func(context.Context) error, error)
 	if err != nil {
 		return nil, err
 	}
-	ratio := cfg.SampleRatio
-	if ratio <= 0 || ratio > 1 {
-		ratio = 1
-	}
+	// The sampler is left to OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG
+	// (default: parent-based, always on).
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
 	)
 	otel.SetTracerProvider(tp)
 	return tp.Shutdown, nil

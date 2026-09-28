@@ -433,6 +433,36 @@ ATLANTIS_CHECKOUT_STRATEGY="<branch|merge>"
 How to check out pull requests. Use either `branch` or `merge`.
 Defaults to `branch`. See [Checkout Strategy](checkout-strategy.md) for more details.
 
+### `--cluster-address`
+
+```bash
+atlantis server --cluster-address="http://10.0.0.5:4142"
+# or
+ATLANTIS_CLUSTER_ADDRESS="http://10.0.0.5:4142"
+```
+
+URL that other replicas use to reach this replica's internal cluster listener. Only used when `--locking-db-type=kubernetes`. Defaults to `http://$POD_IP:<cluster-port>`, so set the `POD_IP` environment variable from the downward API.
+
+### `--cluster-port`
+
+```bash
+atlantis server --cluster-port=4142
+# or
+ATLANTIS_CLUSTER_PORT=4142
+```
+
+Port of the internal listener used for traffic between replicas (forwarded commands, pull cleanup, and proxied job output) when `--locking-db-type=kubernetes`. Defaults to `4142`. Do not expose this port through an Ingress or public Service.
+
+### `--cluster-token`
+
+```bash
+atlantis server --cluster-token="<secret>"
+# or
+ATLANTIS_CLUSTER_TOKEN="<secret>"
+```
+
+Shared secret that authenticates calls between replicas. Required when `--locking-db-type=kubernetes`. Mount it from a Kubernetes Secret with the `ATLANTIS_CLUSTER_TOKEN` environment variable.
+
 ### `--config` <Badge text="v0.1.3+" type="info"/>
 
 ```bash
@@ -1135,6 +1165,26 @@ added to a job's file as the job runs. NFS, EFS and Azure Files do. For S3, use 
 that supports appends, such as s3fs; Mountpoint for Amazon S3 does not
 support appending to files in general-purpose buckets.
 
+### `--kubernetes-identity`
+
+```bash
+atlantis server --kubernetes-identity="atlantis-0"
+# or
+ATLANTIS_KUBERNETES_IDENTITY="atlantis-0"
+```
+
+Unique identity of this replica, used as the holder of its Leases. Only used when `--locking-db-type=kubernetes`. Defaults to `$POD_NAME`, then the hostname.
+
+### `--kubernetes-namespace`
+
+```bash
+atlantis server --kubernetes-namespace="atlantis"
+# or
+ATLANTIS_KUBERNETES_NAMESPACE="atlantis"
+```
+
+Namespace in which Atlantis stores its Leases and `PullStatus` resources. Only used when `--locking-db-type=kubernetes`. Defaults to `$POD_NAMESPACE`, then the service account's namespace.
+
 ### `--language` <Badge text="v0.45.0+" type="info"/>
 
 ```bash
@@ -1189,9 +1239,9 @@ For complete markdown wording customization, keep using
 ### `--locking-db-type` <Badge text="v0.19.9+" type="info"/>
 
 ```bash
-atlantis server --locking-db-type="<boltdb|redis>"
+atlantis server --locking-db-type="<boltdb|redis|kubernetes>"
 # or
-ATLANTIS_LOCKING_DB_TYPE="<boltdb|redis>"
+ATLANTIS_LOCKING_DB_TYPE="<boltdb|redis|kubernetes>"
 ```
 
 The locking database type to use for storing plan and apply locks. Defaults to `boltdb`.
@@ -1199,6 +1249,7 @@ The locking database type to use for storing plan and apply locks. Defaults to `
 Notes:
 
 - If set to `boltdb`, only one process may have access to the boltdb instance.
+- If set to `kubernetes`, locks are stored as `coordination.k8s.io` Leases and pull status as `atlantis.runatlantis.io/v1alpha1` `PullStatus` resources, and any number of replicas can run. Each pull request is handled by one replica; webhooks received by another replica are forwarded to it. Requires `--cluster-token`. See the Helm chart in `deploy/helm/atlantis`.
 - If set to `redis`, use `--redis-host` and `--redis-port` for single-node mode, or `--redis-cluster-addresses` for Redis Cluster mode. Use `--redis-password` and (optionally) `--redis-username` only if your Redis deployment requires authentication.
 
 ### `--log-level` <Badge text="v0.1.3+" type="info"/>
@@ -1294,6 +1345,36 @@ until all changed projects are applied.
 Defaults to `false`.
 
 Only supported on GitLab
+
+### `--plan-risk-enabled`
+
+```bash
+atlantis server --plan-risk-enabled
+# or
+ATLANTIS_PLAN_RISK_ENABLED=true
+```
+
+Assess every plan's risk with [TypeSafe](https://docs.typesafe.ai) and show it in the plan comment. Adds the `plan_risk` apply requirement, which blocks unapproved applies of plans above `--plan-risk-max-unapproved-tier`. Requires `--typesafe-api-key`. Only the resource addresses, types, and actions from `terraform show -json` are sent, never attribute values.
+
+### `--plan-risk-failure-tier`
+
+```bash
+atlantis server --plan-risk-failure-tier="<low|medium|high|critical>"
+# or
+ATLANTIS_PLAN_RISK_FAILURE_TIER="<low|medium|high|critical>"
+```
+
+Risk tier assigned when a plan cannot be assessed (for example, the TypeSafe API is unreachable). Defaults to `high`, so an assessment failure never makes an apply more permissive.
+
+### `--plan-risk-max-unapproved-tier`
+
+```bash
+atlantis server --plan-risk-max-unapproved-tier="<low|medium|high|critical>"
+# or
+ATLANTIS_PLAN_RISK_MAX_UNAPPROVED_TIER="<low|medium|high|critical>"
+```
+
+Highest risk tier that the `plan_risk` apply requirement allows without pull request approval. Defaults to `low`.
 
 ### `--port` <Badge text="v0.1.3+" type="info"/>
 
@@ -1686,6 +1767,46 @@ ATLANTIS_TFE_TOKEN='xxx.atlasv1.yyy'
 ```
 
 A token for Terraform Cloud/Terraform Enterprise integration. See [Terraform Cloud](terraform-cloud.md) for more details.
+
+### `--tracing-enabled`
+
+```bash
+atlantis server --tracing-enabled
+# or
+ATLANTIS_TRACING_ENABLED=true
+```
+
+Export OpenTelemetry traces over OTLP/gRPC for webhooks, commands, projects, and workflow steps. Configure the exporter and sampler with the standard `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER`, and `OTEL_TRACES_SAMPLER_ARG` environment variables. Trace context is always propagated between replicas, even when export is disabled.
+
+### `--typesafe-api-key`
+
+```bash
+atlantis server --typesafe-api-key="<key>"
+# or
+ATLANTIS_TYPESAFE_API_KEY="<key>"
+```
+
+TypeSafe API key used for plan risk assessment. Should be set with the `ATLANTIS_TYPESAFE_API_KEY` environment variable.
+
+### `--typesafe-api-url`
+
+```bash
+atlantis server --typesafe-api-url="https://api.typesafe.ai"
+# or
+ATLANTIS_TYPESAFE_API_URL="https://api.typesafe.ai"
+```
+
+TypeSafe API base URL. Defaults to `https://api.typesafe.ai`.
+
+### `--typesafe-model`
+
+```bash
+atlantis server --typesafe-model="jev-1.13.0"
+# or
+ATLANTIS_TYPESAFE_MODEL="jev-1.13.0"
+```
+
+TypeSafe model used for plan risk assessment. Defaults to `jev-1.13.0`. Pin a versioned model rather than an alias such as `jev-latest` so risk tiers do not change when a new model is released.
 
 ### `--use-tf-plugin-cache` <Badge text="v0.26.0+" type="info"/>
 

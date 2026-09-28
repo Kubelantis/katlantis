@@ -69,6 +69,10 @@ import (
 	"github.com/runatlantis/atlantis/server/events/webhooks"
 	"github.com/runatlantis/atlantis/server/i18n"
 	"github.com/runatlantis/atlantis/server/logging"
+	"github.com/runatlantis/atlantis/server/tracing"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -92,6 +96,14 @@ const (
 
 // Server runs the Atlantis web server.
 type Server struct {
+	// kube is set when running with --locking-db-type=kubernetes.
+	kube *kubeRuntime
+	// commandRunner is the local runner, used by the cluster listener.
+	commandRunner events.ContextCommandRunner
+	// pullCleaner is the local pull cleaner, used by the cluster listener.
+	pullCleaner events.PullCleaner
+	// tracingShutdown flushes and stops the trace exporter.
+	tracingShutdown                func(context.Context) error
 	AtlantisVersion                string
 	AtlantisURL                    *url.URL
 	Router                         *mux.Router
@@ -228,6 +240,21 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 
 	if err != nil {
 		return nil, fmt.Errorf("instantiating metrics scope: %w", err)
+	}
+
+	var kubeRT *kubeRuntime
+	if userConfig.LockingDBType == "kubernetes" {
+		if kubeRT, err = newKubeRuntime(userConfig, logger, statsScope); err != nil {
+			return nil, err
+		}
+	}
+	tracingCfg := tracing.Config{Enabled: userConfig.TracingEnabled, ServiceName: "atlantis", Version: config.AtlantisVersion}
+	if kubeRT != nil {
+		tracingCfg.Identity, tracingCfg.Namespace = kubeRT.identity, kubeRT.namespace
+	}
+	tracingShutdown, err := tracing.Setup(context.Background(), tracingCfg)
+	if err != nil {
+		return nil, fmt.Errorf("setting up tracing: %w", err)
 	}
 
 	if userConfig.GithubUser != "" || userConfig.GithubAppID != 0 {
@@ -539,6 +566,12 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
+	case "kubernetes":
+		logger.Info("Utilizing Kubernetes Leases and PullStatus resources in namespace %s", kubeRT.namespace)
+		database, err = kubeRT.database()
+		if err != nil {
+			return nil, err
+		}
 	case "boltdb":
 		logger.Info("Utilizing BoltDB")
 		database, err = boltdb.New(userConfig.DataDir)
@@ -557,7 +590,10 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	disableGlobalApplyLock := userConfig.DisableGlobalApplyLock
 
 	applyLockingClient = locking.NewApplyClient(database, disableApply, disableGlobalApplyLock)
-	workingDirLocker := events.NewDefaultWorkingDirLocker()
+	var workingDirLocker events.WorkingDirLocker = events.NewDefaultWorkingDirLocker()
+	if kubeRT != nil {
+		workingDirLocker = kubeRT.workingDirLocker(workingDirLocker)
+	}
 
 	var workingDir events.WorkingDir = &events.FileWorkspace{
 		DataDir:           userConfig.DataDir,
@@ -1131,9 +1167,15 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		apiController.DriftWebhookSender = driftWebhookSender
 	}
 
+	var eventsCommandRunner events.CommandRunner = commandRunner
+	var eventsPullCleaner events.PullCleaner = pullClosedExecutor
+	if kubeRT != nil {
+		router := kubeRT.router(commandRunner, pullClosedExecutor)
+		eventsCommandRunner, eventsPullCleaner = router, router
+	}
 	eventsController := &events_controllers.VCSEventsController{
-		CommandRunner:                   commandRunner,
-		PullCleaner:                     pullClosedExecutor,
+		CommandRunner:                   eventsCommandRunner,
+		PullCleaner:                     eventsPullCleaner,
 		Parser:                          eventParser,
 		CommentParser:                   commentParser,
 		Logger:                          logger,
@@ -1199,6 +1241,10 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		EnableProfilingAPI:             userConfig.EnableProfilingAPI,
 		database:                       database,
 		logStore:                       logStore,
+		kube:                           kubeRT,
+		commandRunner:                  commandRunner,
+		pullCleaner:                    pullClosedExecutor,
+		tracingShutdown:                tracingShutdown,
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
@@ -1235,8 +1281,14 @@ func (s *Server) SetupRoutes() {
 	s.Router.HandleFunc("/locks", s.LocksController.DeleteLock).Methods("DELETE").Queries("id", "{id:.*}")
 	s.Router.HandleFunc("/lock", s.LocksController.GetLock).Methods("GET").
 		Queries(LockViewRouteIDQueryParam, fmt.Sprintf("{%s}", LockViewRouteIDQueryParam)).Name(LockViewRouteName)
-	s.Router.HandleFunc("/jobs/{job-id}", s.JobsController.GetProjectJobs).Methods("GET").Name(ProjectJobsViewRouteName)
-	s.Router.HandleFunc("/jobs/{job-id}/ws", s.JobsController.GetProjectJobsWS).Methods("GET")
+	var jobsPage, jobsWS http.Handler = http.HandlerFunc(s.JobsController.GetProjectJobs), http.HandlerFunc(s.JobsController.GetProjectJobsWS)
+	if s.kube != nil {
+		// Jobs run on the pull's owner; serve them from whichever replica is asked.
+		proxy := s.kube.jobProxy(s.ProjectCmdOutputHandler)
+		jobsPage, jobsWS = proxy.Middleware(jobsPage), proxy.Middleware(jobsWS)
+	}
+	s.Router.Handle("/jobs/{job-id}", jobsPage).Methods("GET").Name(ProjectJobsViewRouteName)
+	s.Router.Handle("/jobs/{job-id}/ws", jobsWS).Methods("GET")
 
 	r, ok := s.StatsReporter.(prometheus.Reporter)
 	if ok {
@@ -1270,7 +1322,8 @@ func (s *Server) Start() error {
 		StackAll:   false,
 		StackSize:  1024 * 8,
 	}, NewRequestLogger(s))
-	n.UseHandler(s.Router)
+	s.Router.Use(nameSpanAfterRoute)
+	n.UseHandler(otelhttp.NewHandler(s.Router, "atlantis.http"))
 
 	defer s.Logger.Flush()
 
@@ -1286,6 +1339,12 @@ func (s *Server) Start() error {
 	}()
 
 	tlsConfig := &tls.Config{GetCertificate: s.GetSSLCertificate, MinVersion: tls.VersionTLS12}
+
+	if s.kube != nil {
+		if err := s.kube.start(s, s.commandRunner, s.pullCleaner); err != nil {
+			return err
+		}
+	}
 
 	server := &http.Server{Addr: fmt.Sprintf(":%d", s.Port), Handler: n, TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -1305,7 +1364,21 @@ func (s *Server) Start() error {
 	<-stop
 
 	s.Logger.Warn("Received interrupt. Waiting for in-progress operations to complete")
+	if s.kube != nil {
+		// Hand our pulls to other replicas; running jobs stay reachable.
+		s.kube.drain()
+	}
 	s.waitForDrain()
+	if s.kube != nil {
+		s.kube.stop()
+	}
+	if s.tracingShutdown != nil {
+		tctx, tcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.tracingShutdown(tctx); err != nil {
+			s.Logger.Err("flushing traces: %s", err)
+		}
+		tcancel()
+	}
 
 	// Close the log files of jobs cut short by the shutdown.
 	if s.logStore != nil {
@@ -1479,6 +1552,12 @@ func (s *Server) Healthz(w http.ResponseWriter, _ *http.Request) {
 // dependency is unreachable. Suitable for K8s readiness probes.
 func (s *Server) Readyz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if s.kube != nil && s.Drainer != nil && s.Drainer.GetStatus().ShuttingDown {
+		// Take this replica out of the Service while it drains.
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"draining"}`)) // nolint: errcheck
+		return
+	}
 	if s.database != nil {
 		if err := s.database.Ping(); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -1533,4 +1612,21 @@ func ParseAtlantisURL(u string) (*url.URL, error) {
 	// use it in the rest of the program.
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
 	return parsed, nil
+}
+
+// nameSpanAfterRoute renames the request span after the matched route
+// template, so span names stay low-cardinality (e.g. "GET /jobs/{job-id}").
+// It runs as mux middleware because the route is unknown when otelhttp starts
+// the span.
+func nameSpanAfterRoute(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if route := mux.CurrentRoute(r); route != nil {
+			if tpl, err := route.GetPathTemplate(); err == nil {
+				span := trace.SpanFromContext(r.Context())
+				span.SetName(r.Method + " " + tpl)
+				span.SetAttributes(semconv.HTTPRoute(tpl))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }

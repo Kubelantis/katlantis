@@ -90,6 +90,18 @@ type UserConfig struct {
 	APISecret                       string `mapstructure:"api-secret"`
 	HidePrevPlanComments            bool   `mapstructure:"hide-prev-plan-comments"`
 	LockingDBType                   string `mapstructure:"locking-db-type"`
+	KubernetesNamespace             string `mapstructure:"kubernetes-namespace"`
+	KubernetesIdentity              string `mapstructure:"kubernetes-identity"`
+	ClusterAddress                  string `mapstructure:"cluster-address"`
+	ClusterPort                     int    `mapstructure:"cluster-port"`
+	ClusterToken                    string `mapstructure:"cluster-token"`
+	TracingEnabled                  bool   `mapstructure:"tracing-enabled"`
+	PlanRiskEnabled                 bool   `mapstructure:"plan-risk-enabled"`
+	PlanRiskFailureTier             string `mapstructure:"plan-risk-failure-tier"`
+	PlanRiskMaxUnapprovedTier       string `mapstructure:"plan-risk-max-unapproved-tier"`
+	TypeSafeAPIKey                  string `mapstructure:"typesafe-api-key"`
+	TypeSafeAPIURL                  string `mapstructure:"typesafe-api-url"`
+	TypeSafeModel                   string `mapstructure:"typesafe-model"`
 	LogLevel                        string `mapstructure:"log-level"`
 	MarkdownTemplateOverridesDir    string `mapstructure:"markdown-template-overrides-dir"`
 	MaxCommentsPerCommand           int    `mapstructure:"max-comments-per-command"`
