@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	tally "github.com/uber-go/tally/v4"
+
 	"github.com/runatlantis/atlantis/server/events/models"
 )
 
@@ -51,6 +53,8 @@ type Assessor struct {
 	MaxChanges int
 	Timeout    time.Duration
 	Now        func() time.Time
+	// Scope receives assessed{tier} and error counters; optional.
+	Scope tally.Scope
 }
 
 type state struct {
@@ -114,6 +118,22 @@ func (a *Assessor) now() time.Time {
 // Assess scores a plan. It never returns nil: when assessment fails the
 // result carries Error and the configured failure tier.
 func (a *Assessor) Assess(ctx context.Context, project Project, showJSON []byte) *models.PlanRisk {
+	risk := a.assess(ctx, project, showJSON)
+	a.record(risk)
+	return risk
+}
+
+func (a *Assessor) record(risk *models.PlanRisk) {
+	if a.Scope == nil {
+		return
+	}
+	a.Scope.Tagged(map[string]string{"tier": string(risk.Tier)}).Counter("assessed").Inc(1)
+	if risk.Error != "" {
+		a.Scope.Counter("error").Inc(1)
+	}
+}
+
+func (a *Assessor) assess(ctx context.Context, project Project, showJSON []byte) *models.PlanRisk {
 	risk := &models.PlanRisk{AssessedAt: a.now().UTC()}
 	changes, err := ParseChanges(showJSON)
 	if err != nil {
@@ -229,7 +249,9 @@ func (a *Assessor) Assess(ctx context.Context, project Project, showJSON []byte)
 
 // Failure returns the result for a plan that could not be assessed.
 func (a *Assessor) Failure(err error) *models.PlanRisk {
-	return a.fail(&models.PlanRisk{AssessedAt: a.now().UTC()}, err)
+	risk := a.fail(&models.PlanRisk{AssessedAt: a.now().UTC()}, err)
+	a.record(risk)
+	return risk
 }
 
 func (a *Assessor) fail(risk *models.PlanRisk, err error) *models.PlanRisk {

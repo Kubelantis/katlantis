@@ -1,0 +1,37 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "atlantis.fullname" . }}
+  labels:
+    {{- include "atlantis.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  groups:
+    - name: atlantis
+      rules:
+        - alert: AtlantisNoLeader
+          expr: max(atlantis_cluster_leader{namespace="{{ .Release.Namespace }}"}) < 1
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: No Atlantis replica holds the leader Lease; stale Leases are not being cleaned up.
+        - alert: AtlantisMembershipDegraded
+          expr: min(atlantis_cluster_members{namespace="{{ .Release.Namespace }}"}) < {{ .Values.replicaCount }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Fewer Atlantis replicas are live members than configured.
+        - alert: AtlantisForwardingErrors
+          expr: sum(rate(atlantis_cluster_routing_forward_error{namespace="{{ .Release.Namespace }}"}[10m])) > 0
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Atlantis replicas cannot reach pull owners; commands are running on the receiving replica.
+        - alert: AtlantisPlanRiskErrors
+          expr: sum(rate(atlantis_plan_risk_error{namespace="{{ .Release.Namespace }}"}[30m])) > 0
+          for: 30m
+          labels: {severity: warning}
+          annotations:
+            summary: Plan risk assessments are failing and falling back to the failure tier.
+{{- end }}

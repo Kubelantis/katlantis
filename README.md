@@ -1,5 +1,12 @@
 # Atlantis <!-- omit in toc -->
 
+> **Kubernetes-native fork.** This branch runs Atlantis as a highly available,
+> multi-replica Deployment with state in Kubernetes Leases and a `PullStatus`
+> CRD (no BoltDB/Redis), OpenTelemetry tracing, Prometheus metrics, and
+> optional TypeSafe Jev plan risk scoring. See
+> [docs/kubernetes-native.md](docs/kubernetes-native.md) and the Helm chart in
+> [deploy/helm/atlantis](deploy/helm/atlantis).
+
 [![Latest Release](https://img.shields.io/github/release/runatlantis/atlantis.svg)](https://github.com/runatlantis/atlantis/releases/latest)
 [![SuperDopeBadge](./runatlantis.io/public/hightower-super-dope.svg)](https://twitter.com/kelseyhightower/status/893260922222813184)
 [![Go Report Card](https://goreportcard.com/badge/github.com/runatlantis/atlantis)](https://goreportcard.com/report/github.com/runatlantis/atlantis)

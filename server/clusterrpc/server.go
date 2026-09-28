@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/runatlantis/atlantis/server/events"
 	"github.com/runatlantis/atlantis/server/logging"
@@ -56,8 +57,15 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// traceContext returns a context for work that outlives the request. It keeps
+// the request's span (otelhttp already extracted the caller's trace context)
+// but not its cancellation. Without otelhttp in front, the propagated
+// context is extracted here.
 func traceContext(r *http.Request) context.Context {
-	ctx := otel.GetTextMapPropagator().Extract(context.Background(), propagation.HeaderCarrier(r.Header))
+	ctx := context.WithoutCancel(r.Context())
+	if !trace.SpanContextFromContext(ctx).IsValid() {
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(r.Header))
+	}
 	return ctx
 }
 

@@ -927,12 +927,6 @@ func (p *DefaultProjectCommandRunner) assessPlanRisk(ctx command.ProjectContext,
 	} else {
 		ctx.Log.Info("plan risk is %q (%d create, %d update, %d delete, %d replace; %d findings)", risk.Tier, risk.Creates, risk.Updates, risk.Deletes, risk.Replaces, len(risk.Findings))
 	}
-	if ctx.Scope != nil {
-		ctx.Scope.Tagged(map[string]string{"tier": string(risk.Tier)}).Counter("plan_risk_assessed").Inc(1)
-		if risk.Error != "" {
-			ctx.Scope.Counter("plan_risk_error").Inc(1)
-		}
-	}
 	return risk
 }
 

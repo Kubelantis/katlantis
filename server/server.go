@@ -850,6 +850,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 				HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
 			},
 			FailureTier: models.PlanRiskTier(userConfig.PlanRiskFailureTier),
+			Scope:       statsScope.SubScope("plan_risk"),
 		}
 		planRiskMaxUnapproved = models.PlanRiskTier(userConfig.PlanRiskMaxUnapprovedTier)
 	}

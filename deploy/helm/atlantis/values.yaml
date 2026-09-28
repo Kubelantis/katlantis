@@ -1,0 +1,142 @@
+# -- Number of Atlantis replicas. Each pull request is handled by one replica;
+# webhooks that reach another replica are forwarded to it.
+replicaCount: 2
+
+image:
+  repository: ghcr.io/runatlantis/atlantis
+  tag: ""          # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# -- Public URL of Atlantis, used in links posted to pull requests.
+atlantisUrl: "https://atlantis.example.com"
+
+# -- Repos Atlantis may run on (--repo-allowlist).
+repoAllowlist: "github.com/example-org/*"
+
+# -- Name of an existing Secret whose keys are exposed as environment
+# variables, e.g. ATLANTIS_GH_USER, ATLANTIS_GH_TOKEN, ATLANTIS_GH_WEBHOOK_SECRET,
+# ATLANTIS_TYPESAFE_API_KEY. Required.
+vcsSecretName: ""
+
+# -- Extra `atlantis server` flags as ATLANTIS_* environment variables.
+extraEnv: []
+#  - name: ATLANTIS_ENABLE_POLICY_CHECKS
+#    value: "true"
+
+cluster:
+  # -- Port of the internal listener used between replicas. Never exposed.
+  port: 4142
+  # -- Existing Secret holding the inter-replica token under key `token`.
+  # When empty the chart creates one and keeps it across upgrades.
+  tokenSecretName: ""
+
+# -- Server-side repo config (repos.yaml). The metrics block enables the
+# Prometheus endpoint; keep it if you replace this value.
+repoConfig: |
+  repos:
+    - id: /.*/
+  metrics:
+    prometheus:
+      endpoint: /metrics
+
+planRisk:
+  # -- Score every plan with TypeSafe Jev. Needs ATLANTIS_TYPESAFE_API_KEY in vcsSecretName.
+  enabled: false
+  # -- Highest tier that can be applied without pull request approval.
+  maxUnapprovedTier: low
+  # -- Tier used when a plan cannot be assessed.
+  failureTier: high
+  # -- Pinned TypeSafe model.
+  model: jev-1.13.0
+
+tracing:
+  # -- Export OpenTelemetry traces over OTLP/gRPC.
+  enabled: false
+  # -- OTLP endpoint, e.g. http://otel-collector.observability:4317
+  endpoint: ""
+  # -- OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG.
+  sampler: parentbased_traceidratio
+  samplerArg: "1.0"
+
+logLevel: info
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: atlantis.example.com
+  tls: []
+
+metrics:
+  serviceMonitor:
+    # -- Create a Prometheus Operator ServiceMonitor.
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    # -- Create alerting rules for leader election, membership and routing.
+    enabled: false
+    labels: {}
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+autoscaling:
+  # -- Scale on CPU. Atlantis work is bursty and I/O bound; prefer a fixed
+  # replica count unless you have measured it.
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+networkPolicy:
+  # -- Restrict the cluster port to Atlantis pods.
+  enabled: true
+
+# -- How long a terminating replica waits for running plans/applies. Pulls
+# move to other replicas immediately; this only bounds in-flight work.
+terminationGracePeriodSeconds: 3600
+
+# -- Scratch space for clones. Plans made on a replica are applied on it too;
+# configure an S3 plan store (external_stores) to survive replica loss.
+dataVolume:
+  sizeLimit: 20Gi
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 4Gi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# -- Defaults spread replicas across nodes and zones.
+topologySpreadConstraints: []
+
+podSecurityContext:
+  runAsUser: 100
+  runAsGroup: 1000
+  fsGroup: 1000
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]

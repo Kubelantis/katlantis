@@ -1,0 +1,10 @@
+Atlantis is running with {{ .Values.replicaCount }} replicas coordinated through Kubernetes Leases in {{ .Release.Namespace }}.
+
+  kubectl -n {{ .Release.Namespace }} get leases -l app.kubernetes.io/managed-by=atlantis
+  kubectl -n {{ .Release.Namespace }} get pullstatuses
+
+Point your VCS webhook at {{ .Values.atlantisUrl }}/events.
+{{- if not .Values.planRisk.enabled }}
+
+Plan risk scoring is off. Enable it with --set planRisk.enabled=true and ATLANTIS_TYPESAFE_API_KEY in {{ .Values.vcsSecretName }}.
+{{- end }}

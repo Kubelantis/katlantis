@@ -1,0 +1,150 @@
+{{- if not .Values.vcsSecretName }}
+{{- fail "vcsSecretName is required: create a Secret with your ATLANTIS_* VCS credentials" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atlantis.fullname" . }}
+  labels: {{- include "atlantis.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "atlantis.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Start the new replica before stopping an old one so pulls always
+      # have an owner; the old replica drains its running jobs.
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "atlantis.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "atlantis.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: atlantis
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["server"]
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 4141
+            - name: cluster
+              containerPort: {{ .Values.cluster.port }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.vcsSecretName }}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - name: ATLANTIS_LOCKING_DB_TYPE
+              value: kubernetes
+            - name: ATLANTIS_CLUSTER_PORT
+              value: {{ .Values.cluster.port | quote }}
+            - name: ATLANTIS_CLUSTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "atlantis.tokenSecretName" . }}
+                  key: token
+            - name: ATLANTIS_ATLANTIS_URL
+              value: {{ .Values.atlantisUrl | quote }}
+            - name: ATLANTIS_REPO_ALLOWLIST
+              value: {{ .Values.repoAllowlist | quote }}
+            - name: ATLANTIS_REPO_CONFIG
+              value: /etc/atlantis/repos.yaml
+            - name: ATLANTIS_DATA_DIR
+              value: /atlantis-data
+            - name: ATLANTIS_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            {{- if .Values.planRisk.enabled }}
+            - name: ATLANTIS_PLAN_RISK_ENABLED
+              value: "true"
+            - name: ATLANTIS_PLAN_RISK_MAX_UNAPPROVED_TIER
+              value: {{ .Values.planRisk.maxUnapprovedTier | quote }}
+            - name: ATLANTIS_PLAN_RISK_FAILURE_TIER
+              value: {{ .Values.planRisk.failureTier | quote }}
+            - name: ATLANTIS_TYPESAFE_MODEL
+              value: {{ .Values.planRisk.model | quote }}
+            {{- end }}
+            {{- if .Values.tracing.enabled }}
+            - name: ATLANTIS_TRACING_ENABLED
+              value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ required "tracing.endpoint is required when tracing is enabled" .Values.tracing.endpoint | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.tracing.sampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.tracing.samplerArg | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            # Fails while draining and when the Kubernetes API is unreachable.
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /atlantis-data
+            - name: config
+              mountPath: /etc/atlantis
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: {{ .Values.dataVolume.sizeLimit }}
+        - name: config
+          configMap:
+            name: {{ include "atlantis.fullname" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        {{- if .Values.topologySpreadConstraints }}
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+        {{- else }}
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "atlantis.selectorLabels" . | nindent 14 }}
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "atlantis.selectorLabels" . | nindent 14 }}
+        {{- end }}

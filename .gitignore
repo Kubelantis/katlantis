@@ -10,7 +10,7 @@ node_modules/
 helm/test-values.yaml
 *.swp
 golangci-lint
-atlantis
+/atlantis
 .devcontainer
 atlantis.env
 *.act

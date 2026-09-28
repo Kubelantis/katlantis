@@ -122,3 +122,25 @@ end-to-end-tests: ## Run e2e tests
 .PHONY: website-dev
 website-dev: ## Run runatlantic.io on localhost:8080
 	npm run website:dev
+
+ENVTEST_K8S_VERSION ?= 1.37.0
+ENVTEST_DIR ?= $(HOME)/.local/envtest
+
+.PHONY: envtest
+envtest: ## Install kube-apiserver/etcd binaries for Kubernetes integration tests
+	@go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_DIR) -p path
+
+.PHONY: test-kube
+test-kube: ## Run Kubernetes-native backend tests against a real API server
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_DIR) -p path)" \
+		go test ./server/core/kube/... ./server/core/db/... ./server/clusterrpc/...
+
+.PHONY: generate-crds
+generate-crds: ## Regenerate CRD manifests and deepcopy code
+	go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest object paths=./server/core/kube/apis/...
+	go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest crd paths=./server/core/kube/apis/... output:crd:artifacts:config=deploy/crds
+	cp deploy/crds/*.yaml deploy/helm/atlantis/crds/
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart
+	helm lint deploy/helm/atlantis --set vcsSecretName=example
