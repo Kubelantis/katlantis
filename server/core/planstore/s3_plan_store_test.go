@@ -46,6 +46,10 @@ type mockS3Client struct {
 	getObjects map[string][]byte
 }
 
+func (m *mockS3Client) HeadObject(_ context.Context, _ *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	return &s3.HeadObjectOutput{}, nil
+}
+
 func (m *mockS3Client) HeadBucket(_ context.Context, _ *s3.HeadBucketInput, _ ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
 	return &s3.HeadBucketOutput{}, m.headBucketErr
 }
@@ -424,7 +428,8 @@ func TestDeleteForPull_DeleteError(t *testing.T) {
 	}
 	store := planstore.NewS3PlanStoreWithClient(mock, "bucket", "pfx", logging.NewNoopLogger(t))
 
-	// S3 delete errors during cleanup are logged but not returned (soft-fail).
+	// Every deletion is attempted and failures are reported, so the caller
+	// can warn that plans were left in the bucket.
 	err := store.DeleteForPull("acme", "infra", 42)
-	assert.NoError(t, err)
+	assert.ErrorContains(t, err, "forbidden")
 }

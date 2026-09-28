@@ -27,6 +27,7 @@ type GlobalCfg struct {
 // ExternalStores is the raw schema for external storage backends.
 type ExternalStores struct {
 	PlanStore PlanStoreConfig `yaml:"plan_store" json:"plan_store"`
+	LogStore  LogStoreConfig  `yaml:"log_store" json:"log_store"`
 }
 
 // PlanStoreConfig is the raw schema for plan storage configuration.
@@ -35,7 +36,13 @@ type PlanStoreConfig struct {
 	S3   S3StoreConfig `yaml:"s3" json:"s3"`
 }
 
-// S3StoreConfig is the raw schema for S3 plan store configuration.
+// LogStoreConfig is the raw schema for job log archive configuration.
+type LogStoreConfig struct {
+	Type string        `yaml:"type" json:"type"`
+	S3   S3StoreConfig `yaml:"s3" json:"s3"`
+}
+
+// S3StoreConfig is the raw schema for an S3 (or S3-compatible) store.
 type S3StoreConfig struct {
 	Bucket         string `yaml:"bucket" json:"bucket"`
 	Region         string `yaml:"region" json:"region"`
@@ -43,41 +50,68 @@ type S3StoreConfig struct {
 	Endpoint       string `yaml:"endpoint" json:"endpoint"`
 	ForcePathStyle bool   `yaml:"force_path_style" json:"force_path_style"`
 	Profile        string `yaml:"profile" json:"profile"`
+	// ServerSideEncryption is AES256, aws:kms or aws:kms:dsse; empty uses the
+	// bucket's default encryption.
+	ServerSideEncryption string `yaml:"server_side_encryption" json:"server_side_encryption"`
+	// KMSKeyID selects the KMS key for aws:kms and aws:kms:dsse.
+	KMSKeyID string `yaml:"kms_key_id" json:"kms_key_id"`
 }
 
+// Validate validates the external stores.
 func (e ExternalStores) Validate() error {
-	return e.PlanStore.Validate()
+	if err := validateStore("plan_store", e.PlanStore.Type, e.PlanStore.S3); err != nil {
+		return err
+	}
+	return validateStore("log_store", e.LogStore.Type, e.LogStore.S3)
 }
 
+// Validate validates the plan store configuration.
 func (p PlanStoreConfig) Validate() error {
-	if p.Type == "" {
+	return validateStore("plan_store", p.Type, p.S3)
+}
+
+func validateStore(name, typ string, s3 S3StoreConfig) error {
+	if typ == "" {
 		return nil
 	}
-	if p.Type != "s3" {
-		return fmt.Errorf("unsupported plan store type %q: only 's3' is supported", p.Type)
+	if typ != "s3" {
+		return fmt.Errorf("unsupported %s type %q: only 's3' is supported", strings.ReplaceAll(name, "_", " "), typ)
 	}
-	if p.S3.Bucket == "" {
-		return fmt.Errorf("external_stores.plan_store.s3.bucket is required when type is 's3'")
+	if s3.Bucket == "" {
+		return fmt.Errorf("external_stores.%s.s3.bucket is required when type is 's3'", name)
 	}
-	if p.S3.Region == "" {
-		return fmt.Errorf("external_stores.plan_store.s3.region is required when type is 's3'")
+	if s3.Region == "" {
+		return fmt.Errorf("external_stores.%s.s3.region is required when type is 's3'", name)
+	}
+	switch s3.ServerSideEncryption {
+	case "", "AES256", "aws:kms", "aws:kms:dsse":
+	default:
+		return fmt.Errorf("external_stores.%s.s3.server_side_encryption %q must be one of AES256, aws:kms, aws:kms:dsse", name, s3.ServerSideEncryption)
+	}
+	if s3.KMSKeyID != "" && !strings.HasPrefix(s3.ServerSideEncryption, "aws:kms") {
+		return fmt.Errorf("external_stores.%s.s3.kms_key_id requires server_side_encryption aws:kms or aws:kms:dsse", name)
 	}
 	return nil
 }
 
+// ToValid converts to the validated form.
 func (e ExternalStores) ToValid() valid.ExternalStores {
 	return valid.ExternalStores{
-		PlanStore: valid.PlanStoreConfig{
-			Type: e.PlanStore.Type,
-			S3: valid.S3StoreConfig{
-				Bucket:         e.PlanStore.S3.Bucket,
-				Region:         e.PlanStore.S3.Region,
-				Prefix:         e.PlanStore.S3.Prefix,
-				Endpoint:       e.PlanStore.S3.Endpoint,
-				ForcePathStyle: e.PlanStore.S3.ForcePathStyle,
-				Profile:        e.PlanStore.S3.Profile,
-			},
-		},
+		PlanStore: valid.PlanStoreConfig{Type: e.PlanStore.Type, S3: e.PlanStore.S3.toValid()},
+		LogStore:  valid.LogStoreConfig{Type: e.LogStore.Type, S3: e.LogStore.S3.toValid()},
+	}
+}
+
+func (s S3StoreConfig) toValid() valid.S3StoreConfig {
+	return valid.S3StoreConfig{
+		Bucket:               s.Bucket,
+		Region:               s.Region,
+		Prefix:               s.Prefix,
+		Endpoint:             s.Endpoint,
+		ForcePathStyle:       s.ForcePathStyle,
+		Profile:              s.Profile,
+		ServerSideEncryption: s.ServerSideEncryption,
+		KMSKeyID:             s.KMSKeyID,
 	}
 }
 

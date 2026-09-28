@@ -57,6 +57,14 @@ type GlobalCfg struct {
 // ExternalStores holds configuration for external storage backends.
 type ExternalStores struct {
 	PlanStore PlanStoreConfig
+	LogStore  LogStoreConfig
+}
+
+// LogStoreConfig holds the type and backend-specific config for the job log
+// archive.
+type LogStoreConfig struct {
+	Type string
+	S3   S3StoreConfig
 }
 
 // PlanStoreConfig holds the type and backend-specific config for plan storage.
@@ -65,14 +73,16 @@ type PlanStoreConfig struct {
 	S3   S3StoreConfig
 }
 
-// S3StoreConfig holds S3-specific configuration for the plan store.
+// S3StoreConfig holds configuration for an S3 (or S3-compatible) store.
 type S3StoreConfig struct {
-	Bucket         string
-	Region         string
-	Prefix         string
-	Endpoint       string
-	ForcePathStyle bool
-	Profile        string
+	Bucket               string
+	Region               string
+	Prefix               string
+	Endpoint             string
+	ForcePathStyle       bool
+	Profile              string
+	ServerSideEncryption string
+	KMSKeyID             string
 }
 
 type Metrics struct {
