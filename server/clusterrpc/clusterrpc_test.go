@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -200,4 +202,154 @@ func TestJobProxyServesRemoteJob(t *testing.T) {
 	Equals(t, "local", get("/jobs/job-a"))
 	Equals(t, "output of /jobs/job-b", get("/jobs/job-b"))
 	Equals(t, "local", get("/jobs/unknown"))
+}
+
+// slowAck runs the real handler, then withholds the response past the
+// sender's timeout: the owner accepted the command but the sender cannot know.
+func slowAck(inner http.Handler, delay time.Duration, slowCalls int) http.Handler {
+	var n atomic.Int32
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		inner.ServeHTTP(rec, r)
+		if int(n.Add(1)) <= slowCalls {
+			time.Sleep(delay)
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	})
+}
+
+func lostAckSetup(t *testing.T, slowCalls int, ownerLive bool) (*fakeRunner, *fakeRunner, *clusterrpc.Router, *[]string) {
+	remote, local := newFakeRunner(), newFakeRunner()
+	s := &clusterrpc.Server{Token: token, Local: remote, LocalClean: remote, Jobs: jobs{}, JobsHandler: http.NotFoundHandler(), Logger: logging.NewNoopLogger(t), Drain: drain{}}
+	srv := httptest.NewServer(slowAck(s.Handler(), 400*time.Millisecond, slowCalls))
+	t.Cleanup(srv.Close)
+	owner := cluster.Member{Identity: "b", Address: srv.URL}
+	owners := staticOwners{self: "a", owner: owner}
+	if ownerLive {
+		owners.members = []cluster.Member{{Identity: "a"}, owner}
+	}
+	var comments []string
+	r := &clusterrpc.Router{
+		Local: local, LocalClean: local, Owners: owners,
+		Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
+		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: 100 * time.Millisecond,
+		Notify: func(_ models.Repo, _ int, msg string) error { comments = append(comments, msg); return nil },
+	}
+	return remote, local, r, &comments
+}
+
+func TestLostAckIsNotRunTwice(t *testing.T) {
+	remote, local, r, comments := lostAckSetup(t, 3, true)
+	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Apply})
+	remote.wait(t)
+	time.Sleep(200 * time.Millisecond)
+	Equals(t, 1, remote.count()) // retries carried the same request ID
+	Equals(t, 0, local.count())  // the live owner may be running it: do not run again
+	Equals(t, 1, len(*comments))
+	Assert(t, strings.Contains((*comments)[0], "could not confirm that replica `b`"), "unexpected comment %q", (*comments)[0])
+}
+
+func TestRetryAfterLostAckIsDeduplicated(t *testing.T) {
+	remote, local, r, comments := lostAckSetup(t, 1, true)
+	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
+	remote.wait(t)
+	time.Sleep(200 * time.Millisecond)
+	Equals(t, 1, remote.count())
+	Equals(t, 0, local.count())
+	Equals(t, 0, len(*comments))
+}
+
+func TestLostAckFromDeadOwnerRunsLocally(t *testing.T) {
+	_, local, r, comments := lostAckSetup(t, 3, false)
+	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
+	local.wait(t)
+	Equals(t, 1, local.count())
+	Equals(t, 0, len(*comments))
+}
+
+type dynOwners struct {
+	mu      sync.Mutex
+	self    string
+	owner   cluster.Member
+	members []cluster.Member
+}
+
+func (d *dynOwners) Identity() string { return d.self }
+func (d *dynOwners) Owner(string) (cluster.Member, bool) {
+	return d.owner, d.owner.Identity != ""
+}
+func (d *dynOwners) Members() []cluster.Member {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]cluster.Member(nil), d.members...)
+}
+func (d *dynOwners) set(ms ...cluster.Member) { d.mu.Lock(); d.members = ms; d.mu.Unlock() }
+
+type holders map[int]string
+
+func (h holders) PlanHolder(_ models.Repo, pull int) (string, error) { return h[pull], nil }
+
+func TestApplyRoutesToPlanHolder(t *testing.T) {
+	holderRunner, ownerRunner := newFakeRunner(), newFakeRunner()
+	holderSrv := ownerServer(t, holderRunner, drain{}, http.NotFoundHandler())
+	ownerSrv := ownerServer(t, ownerRunner, drain{}, http.NotFoundHandler())
+	holder := cluster.Member{Identity: "atlantis-2", Address: holderSrv.URL}
+	owner := cluster.Member{Identity: "atlantis-1", Address: ownerSrv.URL}
+	apply := &events.CommentCommand{Name: command.Apply}
+
+	newRouter := func(local *fakeRunner, owners *dynOwners, shared bool, wait time.Duration) *clusterrpc.Router {
+		return &clusterrpc.Router{
+			Local: local, LocalClean: local, Owners: owners,
+			Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
+			Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: time.Second,
+			Plans: holders{1: "atlantis-2", 2: "atlantis-0"}, SharedPlans: shared,
+			PlanHolderWait: wait, PlanHolderPoll: 20 * time.Millisecond,
+		}
+	}
+
+	t.Run("apply goes to the live plan holder, not the hash owner", func(t *testing.T) {
+		owners := &dynOwners{self: "atlantis-0", owner: owner}
+		owners.set(cluster.Member{Identity: "atlantis-0"}, owner, holder)
+		newRouter(newFakeRunner(), owners, false, time.Minute).RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, apply)
+		holderRunner.wait(t)
+	})
+
+	t.Run("plans are held here: apply runs locally", func(t *testing.T) {
+		local := newFakeRunner()
+		owners := &dynOwners{self: "atlantis-0", owner: owner}
+		owners.set(cluster.Member{Identity: "atlantis-0"}, owner)
+		newRouter(local, owners, false, time.Minute).RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 2, apply)
+		local.wait(t)
+	})
+
+	t.Run("apply waits for a restarting plan holder", func(t *testing.T) {
+		owners := &dynOwners{self: "atlantis-0", owner: owner}
+		owners.set(cluster.Member{Identity: "atlantis-0"}, owner) // holder is restarting
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			owners.set(cluster.Member{Identity: "atlantis-0"}, owner, holder)
+		}()
+		start := time.Now()
+		newRouter(newFakeRunner(), owners, false, time.Minute).RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, apply)
+		holderRunner.wait(t)
+		Assert(t, time.Since(start) >= 150*time.Millisecond, "must have waited for the holder")
+		Equals(t, 0, ownerRunner.count())
+	})
+
+	t.Run("a draining plan holder is waited for, then the owner takes over", func(t *testing.T) {
+		owners := &dynOwners{self: "atlantis-0", owner: owner}
+		drainingHolder := holder
+		drainingHolder.Draining = true
+		owners.set(cluster.Member{Identity: "atlantis-0"}, owner, drainingHolder)
+		newRouter(newFakeRunner(), owners, false, 100*time.Millisecond).RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, apply)
+		ownerRunner.wait(t)
+	})
+
+	t.Run("shared plan store: apply uses normal ownership", func(t *testing.T) {
+		owners := &dynOwners{self: "atlantis-0", owner: owner}
+		owners.set(cluster.Member{Identity: "atlantis-0"}, owner, holder)
+		newRouter(newFakeRunner(), owners, true, time.Minute).RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, apply)
+		ownerRunner.wait(t)
+	})
 }

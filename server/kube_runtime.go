@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -23,6 +24,8 @@ import (
 	"github.com/runatlantis/atlantis/server/core/kube/kubedb"
 	"github.com/runatlantis/atlantis/server/core/kube/pulllock"
 	"github.com/runatlantis/atlantis/server/events"
+	"github.com/runatlantis/atlantis/server/events/models"
+	"github.com/runatlantis/atlantis/server/events/vcs"
 	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/logging"
 )
@@ -47,6 +50,10 @@ type kubeRuntime struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	srv    *http.Server
+
+	// started is set once the cluster listener, membership and leader
+	// election are running.
+	started atomic.Bool
 }
 
 func newKubeRuntime(userConfig UserConfig, logger logging.SimpleLogging, scope tally.Scope) (*kubeRuntime, error) {
@@ -83,11 +90,19 @@ func newKubeRuntime(userConfig UserConfig, logger logging.SimpleLogging, scope t
 		},
 	}
 	membersGauge := scope.Gauge("members")
+	apiHealthy := scope.Gauge("api_healthy")
 	k.membership = cluster.NewMembership(cluster.MembershipConfig{
 		Client: c, Namespace: ns, Identity: identity, Address: address, Logger: logger,
 		OnChange: func(members []cluster.Member) {
 			membersGauge.Update(float64(len(members)))
 			logger.Info("cluster membership changed: %d live replicas", len(members))
+		},
+		OnSync: func(err error) {
+			if err != nil {
+				apiHealthy.Update(0)
+			} else {
+				apiHealthy.Update(1)
+			}
 		},
 	})
 	k.housekeeper = &cluster.Housekeeper{Client: c, Namespace: ns, Logger: logger}
@@ -112,18 +127,29 @@ func (k *kubeRuntime) database() (*kubedb.KubeDB, error) {
 	return kubedb.New(kubedb.Config{Client: k.client, Namespace: k.namespace, Identity: k.identity})
 }
 
-func (k *kubeRuntime) workingDirLocker(local events.WorkingDirLocker) events.WorkingDirLocker {
+// workingDirLocker returns the Lease-backed locker. onLost is called when a
+// pull's lease is lost to another replica.
+func (k *kubeRuntime) workingDirLocker(local events.WorkingDirLocker, onLost func(repoFullName string, pullNum int)) events.WorkingDirLocker {
+	lost := k.scope.Counter("pull_lock_lost")
 	return pulllock.New(pulllock.Config{
 		Local: local, Client: k.client, Namespace: k.namespace, Identity: k.identity, Logger: k.logger,
+		OnLost: func(repoFullName string, pullNum int) {
+			lost.Inc(1)
+			onLost(repoFullName, pullNum)
+		},
 	})
 }
 
 // router wraps the local command runner and pull cleaner so work is sent to
 // the owning replica.
-func (k *kubeRuntime) router(local events.ContextCommandRunner, localClean events.PullCleaner) *clusterrpc.Router {
+func (k *kubeRuntime) router(local events.ContextCommandRunner, localClean events.PullCleaner, vcsClient vcs.Client, plans clusterrpc.PlanHolders, sharedPlans bool, planHolderWait time.Duration) *clusterrpc.Router {
 	return &clusterrpc.Router{
+		Plans: plans, SharedPlans: sharedPlans, PlanHolderWait: planHolderWait,
 		Local: local, LocalClean: localClean, Owners: k.membership,
 		Client: k.rpcClient, Logger: k.logger, Scope: k.scope.SubScope("routing"),
+		Notify: func(repo models.Repo, pullNum int, msg string) error {
+			return vcsClient.CreateComment(k.logger, repo, pullNum, msg, "")
+		},
 	}
 }
 
@@ -160,7 +186,23 @@ func (k *kubeRuntime) start(s *Server, local events.ContextCommandRunner, localC
 			k.logger.Err("leader election: %s", err)
 		}
 	})
+	k.started.Store(true)
 	return nil
+}
+
+// ready reports whether this replica should receive traffic. It depends only
+// on local state: the Kubernetes API is shared by every replica, so gating
+// readiness on it would take all replicas out of the Service at once during
+// an API server outage. Commands that need the API fail individually instead,
+// and atlantis_cluster_api_healthy reports API reachability.
+func (k *kubeRuntime) ready(draining bool) (bool, string) {
+	if draining {
+		return false, "draining"
+	}
+	if !k.started.Load() {
+		return false, "starting"
+	}
+	return true, ""
 }
 
 // drain stops this replica from owning pulls while its running jobs finish.

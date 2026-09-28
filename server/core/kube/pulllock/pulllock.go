@@ -5,6 +5,15 @@
 // rolling update) two replicas may briefly both believe they own a pull; this
 // locker closes that window with a per-pull Lease. The Lease is re-entrant for
 // the replica holding it, so parallel project commands on one replica share it.
+//
+// Fencing: a replica stops trusting its lease once it has gone Duration/2
+// without a successful renewal, or as soon as another replica holds it. Other
+// replicas only take the lease over after a full Duration, so the gap absorbs
+// clock skew. Losing the lease calls OnLost (the server cancels the pull's
+// queued work) and makes LostPullLock report true, which the project runner
+// checks before starting every workflow step. A terraform process that is
+// already running cannot be stopped this way; the state backend's own
+// locking is the last line of defence for that window.
 package pulllock
 
 import (
@@ -13,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,6 +47,10 @@ type Config struct {
 	// Timeout bounds each API call. Defaults to 10s.
 	Timeout time.Duration
 	Logger  logging.SimpleLogging
+	// OnLost is called once, in its own goroutine, when a held lease is lost.
+	OnLost func(repoFullName string, pullNum int)
+	// Now is the clock; defaults to time.Now.
+	Now func() time.Time
 }
 
 type held struct {
@@ -44,6 +58,12 @@ type held struct {
 	lease  *cluster.TimedLease
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	repoFullName string
+	pullNum      int
+	// lastRenew is the UnixNano time of the last successful acquire/renew.
+	lastRenew atomic.Int64
+	lost      atomic.Bool
 }
 
 // Locker layers a per-pull Lease over a local WorkingDirLocker.
@@ -61,7 +81,37 @@ func New(cfg Config) *Locker {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 10 * time.Second
 	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	return &Locker{cfg: cfg, held: map[string]*held{}}
+}
+
+// trustWindow is how long a lease is trusted after its last renewal.
+func (l *Locker) trustWindow() time.Duration { return l.cfg.Duration / 2 }
+
+// stale reports whether h can no longer be trusted.
+func (l *Locker) stale(h *held) bool {
+	return h.lost.Load() || l.cfg.Now().Sub(time.Unix(0, h.lastRenew.Load())) >= l.trustWindow()
+}
+
+func (l *Locker) markLost(h *held, reason error) {
+	if !h.lost.CompareAndSwap(false, true) {
+		return
+	}
+	l.cfg.Logger.Err("lost pull lock %s for %s#%d: %s; cancelling queued work for the pull", h.lease.Name, h.repoFullName, h.pullNum, reason)
+	if l.cfg.OnLost != nil {
+		go l.cfg.OnLost(h.repoFullName, h.pullNum)
+	}
+}
+
+// LostPullLock reports whether this replica held the pull's lease and can no
+// longer trust it. It is false when the pull is not locked here at all.
+func (l *Locker) LostPullLock(repoFullName string, pullNum int) bool {
+	l.mu.Lock()
+	h, ok := l.held[pullKey(repoFullName, pullNum)]
+	l.mu.Unlock()
+	return ok && l.stale(h)
 }
 
 func pullKey(repoFullName string, pullNum int) string {
@@ -75,8 +125,14 @@ func (l *Locker) acquire(repoFullName string, pullNum int, cmdName command.Name)
 	defer l.mu.Unlock()
 
 	if h, ok := l.held[key]; ok {
-		h.refs++
-		return l.releaseFunc(key, h), nil
+		if !l.stale(h) {
+			h.refs++
+			return l.releaseFunc(key, h), nil
+		}
+		// The lease was lost while other commands still referenced it. Those
+		// commands keep failing their fencing checks; this one starts over.
+		delete(l.held, key)
+		h.cancel()
 	}
 
 	lease := &cluster.TimedLease{
@@ -103,26 +159,44 @@ func (l *Locker) acquire(repoFullName string, pullNum int, cmdName command.Name)
 	}
 
 	rctx, rcancel := context.WithCancel(context.Background())
-	h := &held{refs: 1, lease: lease, cancel: rcancel, done: make(chan struct{})}
+	h := &held{refs: 1, lease: lease, cancel: rcancel, done: make(chan struct{}), repoFullName: repoFullName, pullNum: pullNum}
+	h.lastRenew.Store(l.cfg.Now().UnixNano())
 	l.held[key] = h
 	go l.renew(rctx, h)
 	return l.releaseFunc(key, h), nil
 }
 
+// renew renews the lease every Duration/6, so two consecutive failures still
+// fit inside the trust window.
 func (l *Locker) renew(ctx context.Context, h *held) {
 	defer close(h.done)
-	t := time.NewTicker(l.cfg.Duration / 3)
+	t := time.NewTicker(l.cfg.Duration / 6)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			actx, cancel := context.WithTimeout(ctx, l.cfg.Timeout)
-			if err := h.lease.Acquire(actx); err != nil && ctx.Err() == nil {
-				l.cfg.Logger.Warn("renewing pull lock %s: %s", h.lease.Name, err)
-			}
+			timeout := min(l.cfg.Timeout, l.trustWindow()/2)
+			actx, cancel := context.WithTimeout(ctx, timeout)
+			err := h.lease.Acquire(actx)
 			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			switch {
+			case err == nil:
+				h.lastRenew.Store(l.cfg.Now().UnixNano())
+			case errors.Is(err, cluster.ErrHeld):
+				l.markLost(h, err)
+				return
+			default:
+				l.cfg.Logger.Warn("renewing pull lock %s: %s", h.lease.Name, err)
+				if l.stale(h) {
+					l.markLost(h, fmt.Errorf("no successful renewal for %s: %w", l.trustWindow(), err))
+					return
+				}
+			}
 		}
 	}
 }

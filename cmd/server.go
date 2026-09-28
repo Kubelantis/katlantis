@@ -120,6 +120,7 @@ const (
 	KubernetesIdentityFlag           = "kubernetes-identity"
 	ClusterAddressFlag               = "cluster-address"
 	ClusterPortFlag                  = "cluster-port"
+	ClusterPlanHolderWaitFlag        = "cluster-plan-holder-wait-seconds"
 	ClusterTokenFlag                 = "cluster-token" // nolint: gosec
 	TracingEnabledFlag               = "tracing-enabled"
 	PlanRiskEnabledFlag              = "plan-risk-enabled"
@@ -202,6 +203,7 @@ const (
 	DefaultGitlabHostname               = "gitlab.com"
 	DefaultLockingDBType                = "boltdb"
 	DefaultClusterPort                  = 4142
+	DefaultClusterPlanHolderWait        = 180
 	DefaultPlanRiskFailureTier          = "high"
 	DefaultPlanRiskMaxUnapprovedTier    = "low"
 	DefaultTypeSafeAPIURL               = "https://api.typesafe.ai"
@@ -772,6 +774,11 @@ var boolFlags = map[string]boolFlag{
 	},
 }
 var intFlags = map[string]intFlag{
+	ClusterPlanHolderWaitFlag: {
+		description: "When --" + LockingDBType + "=kubernetes and no external plan store is configured, applies run on the replica that made the plan." +
+			" If that replica is restarting, wait this many seconds for it to return before running the apply elsewhere. A negative value disables waiting.",
+		defaultValue: DefaultClusterPlanHolderWait,
+	},
 	ClusterPortFlag: {
 		description:  "Port of the internal listener used for traffic between replicas when --" + LockingDBType + "=kubernetes. Do not expose it outside the cluster.",
 		defaultValue: DefaultClusterPort,
@@ -1089,6 +1096,9 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	}
 	if c.ClusterPort == 0 {
 		c.ClusterPort = DefaultClusterPort
+	}
+	if c.ClusterPlanHolderWaitSeconds == 0 {
+		c.ClusterPlanHolderWaitSeconds = DefaultClusterPlanHolderWait
 	}
 	if c.PlanRiskFailureTier == "" {
 		c.PlanRiskFailureTier = DefaultPlanRiskFailureTier

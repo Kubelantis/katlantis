@@ -4,5 +4,5 @@ description: Kubernetes-native Atlantis — highly available Terraform pull requ
 type: application
 version: 0.1.0
 appVersion: "0.40.0-k8s"
-kubeVersion: ">=1.27.0-0"
+kubeVersion: ">=1.27.0-0"  # persistentVolumeClaimRetentionPolicy
 keywords: [terraform, atlantis, gitops, iac]

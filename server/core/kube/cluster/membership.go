@@ -11,6 +11,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"slices"
 	"strconv"
@@ -52,6 +53,9 @@ type MembershipConfig struct {
 	Logger        logging.SimpleLogging
 	// OnChange is called with the new member list whenever it changes.
 	OnChange func([]Member)
+	// OnSync is called after every renewal with its error, or nil. It lets
+	// callers track API server health without probing it separately.
+	OnSync func(error)
 }
 
 // Membership maintains this replica's member Lease and the live member set.
@@ -121,11 +125,16 @@ func (m *Membership) tick(ctx context.Context) {
 		kube.AnnotationAddress: m.cfg.Address,
 		annotationDraining:     strconv.FormatBool(m.draining.Load()),
 	}
-	if err := m.lease.Acquire(ctx); err != nil {
-		m.cfg.Logger.Warn("renewing member lease: %s", err)
+	renewErr := m.lease.Acquire(ctx)
+	if renewErr != nil {
+		m.cfg.Logger.Warn("renewing member lease: %s", renewErr)
 	}
-	if err := m.refresh(ctx); err != nil {
-		m.cfg.Logger.Warn("listing cluster members: %s", err)
+	refreshErr := m.refresh(ctx)
+	if refreshErr != nil {
+		m.cfg.Logger.Warn("listing cluster members: %s", refreshErr)
+	}
+	if m.cfg.OnSync != nil {
+		m.cfg.OnSync(errors.Join(renewErr, refreshErr))
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 // +kubebuilder:printcolumn:name="Pull",type=integer,JSONPath=`.spec.pull.num`
 // +kubebuilder:printcolumn:name="Head",type=string,JSONPath=`.spec.pull.headCommit`,priority=1
 // +kubebuilder:printcolumn:name="Projects",type=integer,JSONPath=`.spec.projectCount`
+// +kubebuilder:printcolumn:name="Planned-By",type=string,JSONPath=`.spec.plannedBy`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type PullStatus struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -27,6 +28,10 @@ type PullStatusSpec struct {
 	// ProjectCount is len(projects), kept for kubectl output.
 	ProjectCount int             `json:"projectCount"`
 	Projects     []ProjectStatus `json:"projects,omitempty"`
+	// PlannedBy is the identity of the replica that made the latest plan.
+	// Without a shared plan store the plan files live on that replica, so
+	// applies are routed to it.
+	PlannedBy string `json:"plannedBy,omitempty"`
 }
 
 // PullRequest mirrors models.PullRequest. The clone URL and body are

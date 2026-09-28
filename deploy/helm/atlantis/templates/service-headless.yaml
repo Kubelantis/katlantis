@@ -1,0 +1,15 @@
+# Governs the StatefulSet's stable pod names. Replicas talk to each other by
+# pod IP, so no ports need to be published through it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "atlantis.fullname" . }}-headless
+  labels: {{- include "atlantis.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {{- include "atlantis.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: cluster
+      port: {{ .Values.cluster.port }}
+      targetPort: cluster

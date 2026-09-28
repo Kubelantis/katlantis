@@ -13,6 +13,7 @@ import (
 	"github.com/runatlantis/atlantis/server/core/db/dbtest"
 	"github.com/runatlantis/atlantis/server/core/kube/kubedb"
 	"github.com/runatlantis/atlantis/server/core/kube/kubetest"
+	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	. "github.com/runatlantis/atlantis/testing"
 )
@@ -71,4 +72,43 @@ func TestLockDoesNotStoreCredentials(t *testing.T) {
 	for k, v := range leases.Items[0].Annotations {
 		Assert(t, !strings.Contains(v, "s3cret"), "annotation %s leaks credentials", k)
 	}
+}
+
+func TestPlanHolderIsTheReplicaThatPlanned(t *testing.T) {
+	c, ns := kubetest.Client(t)
+	a, err := kubedb.New(kubedb.Config{Client: c, Namespace: ns, Identity: "atlantis-0"})
+	Ok(t, err)
+	b, err := kubedb.New(kubedb.Config{Client: c, Namespace: ns, Identity: "atlantis-1"})
+	Ok(t, err)
+	repo := models.Repo{FullName: "org/repo", VCSHost: models.VCSHost{Hostname: "github.com"}}
+	pull := models.PullRequest{Num: 3, HeadCommit: "sha", BaseRepo: repo}
+	plan := command.ProjectResult{Command: command.Plan, RepoRelDir: ".", Workspace: "default",
+		ProjectCommandOutput: command.ProjectCommandOutput{PlanSuccess: &models.PlanSuccess{TerraformOutput: "Plan: 1 to add"}}}
+
+	holder, err := a.PlanHolder(repo, 3)
+	Ok(t, err)
+	Equals(t, "", holder)
+
+	_, err = a.UpdatePullWithResults(pull, []command.ProjectResult{plan})
+	Ok(t, err)
+	holder, err = b.PlanHolder(repo, 3)
+	Ok(t, err)
+	Equals(t, "atlantis-0", holder)
+
+	// Non-plan updates from other replicas keep the holder.
+	policy := plan
+	policy.Command = command.PolicyCheck
+	_, err = b.UpdatePullWithResults(pull, []command.ProjectResult{policy})
+	Ok(t, err)
+	Ok(t, b.UpdateProjectStatus(pull, "default", ".", models.AppliedPlanStatus))
+	holder, err = b.PlanHolder(repo, 3)
+	Ok(t, err)
+	Equals(t, "atlantis-0", holder)
+
+	// A new plan elsewhere moves it.
+	_, err = b.UpdatePullWithResults(pull, []command.ProjectResult{plan})
+	Ok(t, err)
+	holder, err = a.PlanHolder(repo, 3)
+	Ok(t, err)
+	Equals(t, "atlantis-1", holder)
 }

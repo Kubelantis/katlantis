@@ -1221,10 +1221,27 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 	return outputs, nil
 }
 
+// PullLockFencer is implemented by WorkingDirLockers whose pull locks can be
+// lost to another replica (see pulllock.Locker).
+type PullLockFencer interface {
+	// LostPullLock reports whether this replica held the pull's lock and can
+	// no longer trust it.
+	LostPullLock(repoFullName string, pullNum int) bool
+}
+
+// ErrPullLockLost is returned instead of running a step after this replica
+// lost the pull's lock to another replica.
+var ErrPullLockLost = errors.New("this Atlantis replica lost the pull request's lock to another replica, so the remaining steps were not started. Re-run the command")
+
 // runStep runs a single workflow step inside its own trace span.
 func (p *DefaultProjectCommandRunner) runStep(step valid.Step, ctx command.ProjectContext, absPath string, envs map[string]string) (out string, err error) {
 	_, span := tracing.Start(ctx.Ctx(), "atlantis.step."+step.StepName, tracing.AttrStep.String(step.StepName))
 	defer func() { tracing.End(span, err) }()
+
+	// Fencing: never start a step (above all plan or apply) without the lock.
+	if f, ok := p.WorkingDirLocker.(PullLockFencer); ok && f.LostPullLock(ctx.Pull.BaseRepo.FullName, ctx.Pull.Num) {
+		return "", ErrPullLockLost
+	}
 
 	switch step.StepName {
 	case "init":

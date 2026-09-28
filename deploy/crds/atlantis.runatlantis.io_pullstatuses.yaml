@@ -32,6 +32,9 @@ spec:
     - jsonPath: .spec.projectCount
       name: Projects
       type: integer
+    - jsonPath: .spec.plannedBy
+      name: Planned-By
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -62,6 +65,12 @@ spec:
           spec:
             description: PullStatusSpec mirrors models.PullStatus.
             properties:
+              plannedBy:
+                description: |-
+                  PlannedBy is the identity of the replica that made the latest plan.
+                  Without a shared plan store the plan files live on that replica, so
+                  applies are routed to it.
+                type: string
               projectCount:
                 description: ProjectCount is len(projects), kept for kubectl output.
                 type: integer

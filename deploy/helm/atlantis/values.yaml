@@ -27,6 +27,8 @@ extraEnv: []
 cluster:
   # -- Port of the internal listener used between replicas. Never exposed.
   port: 4142
+  # -- How long an apply waits for a restarting replica that holds its plan.
+  planHolderWaitSeconds: 180
   # -- Existing Secret holding the inter-replica token under key `token`.
   # When empty the chart creates one and keeps it across upgrades.
   tokenSecretName: ""
@@ -103,10 +105,14 @@ networkPolicy:
 # move to other replicas immediately; this only bounds in-flight work.
 terminationGracePeriodSeconds: 3600
 
-# -- Scratch space for clones. Plans made on a replica are applied on it too;
-# configure an S3 plan store (external_stores) to survive replica loss.
-dataVolume:
-  sizeLimit: 20Gi
+# -- Per-replica volume for clones and plan files. With persistence a
+# restarted replica keeps its plans; applies are routed to the replica that
+# made the plan. Configure an S3 plan store (external_stores) to also survive
+# losing a replica's volume or scaling down.
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: ""
 
 resources:
   requests:

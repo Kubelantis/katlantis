@@ -34,6 +34,7 @@ import (
 	prometheus "github.com/uber-go/tally/v4/prometheus"
 	"github.com/urfave/negroni/v3"
 
+	"github.com/runatlantis/atlantis/server/clusterrpc"
 	"github.com/runatlantis/atlantis/server/core/boltdb"
 	cfg "github.com/runatlantis/atlantis/server/core/config"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
@@ -591,9 +592,14 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	disableGlobalApplyLock := userConfig.DisableGlobalApplyLock
 
 	applyLockingClient = locking.NewApplyClient(database, disableApply, disableGlobalApplyLock)
+	cancellationTracker := events.NewCancellationTracker()
 	var workingDirLocker events.WorkingDirLocker = events.NewDefaultWorkingDirLocker()
 	if kubeRT != nil {
-		workingDirLocker = kubeRT.workingDirLocker(workingDirLocker)
+		workingDirLocker = kubeRT.workingDirLocker(workingDirLocker, func(repoFullName string, pullNum int) {
+			// Stop queued projects and execution groups; the step-level
+			// fencing check stops the current project's remaining steps.
+			cancellationTracker.Cancel(models.PullRequest{Num: pullNum, BaseRepo: models.Repo{FullName: repoFullName}})
+		})
 	}
 
 	var workingDir events.WorkingDir = &events.FileWorkspace{
@@ -868,8 +874,6 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 			userConfig.AutoDiscoverModeFlag,
 		),
 	}
-
-	cancellationTracker := events.NewCancellationTracker()
 
 	projectCommandRunner := &events.DefaultProjectCommandRunner{
 		PlanRiskAssessor: planRiskAssessor,
@@ -1190,7 +1194,9 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	var eventsCommandRunner events.CommandRunner = commandRunner
 	var eventsPullCleaner events.PullCleaner = pullClosedExecutor
 	if kubeRT != nil {
-		router := kubeRT.router(commandRunner, pullClosedExecutor)
+		plans, _ := database.(clusterrpc.PlanHolders)
+		router := kubeRT.router(commandRunner, pullClosedExecutor, vcsClient, plans,
+			userConfig.EnableExternalStores, time.Duration(userConfig.ClusterPlanHolderWaitSeconds)*time.Second)
 		eventsCommandRunner, eventsPullCleaner = router, router
 	}
 	eventsController := &events_controllers.VCSEventsController{
@@ -1572,10 +1578,15 @@ func (s *Server) Healthz(w http.ResponseWriter, _ *http.Request) {
 // dependency is unreachable. Suitable for K8s readiness probes.
 func (s *Server) Readyz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if s.kube != nil && s.Drainer != nil && s.Drainer.GetStatus().ShuttingDown {
-		// Take this replica out of the Service while it drains.
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"status":"draining"}`)) // nolint: errcheck
+	if s.kube != nil {
+		// Never probe the shared Kubernetes API here; see kubeRuntime.ready.
+		draining := s.Drainer != nil && s.Drainer.GetStatus().ShuttingDown
+		if ok, reason := s.kube.ready(draining); !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write(fmt.Appendf(nil, `{"status":%q}`, reason)) // nolint: errcheck
+			return
+		}
+		w.Write(healthzData) // nolint: errcheck
 		return
 	}
 	if s.database != nil {

@@ -19,7 +19,9 @@ helm install atlantis deploy/helm/atlantis -n atlantis \
   --set repoAllowlist='github.com/example-org/*'
 ```
 
-The chart installs the `PullStatus` CRD. It also installs a namespaced Role
+Atlantis runs as a StatefulSet: each replica has a stable name and its own
+volume for clones and plans (`persistence.*`). The chart installs the
+`PullStatus` CRD. It also installs a namespaced Role
 limited to Leases and PullStatuses, a cluster token Secret, a
 PodDisruptionBudget, and a NetworkPolicy that limits the cluster port to
 Atlantis pods. Replicas are spread across nodes and zones. Optional pieces are
@@ -40,7 +42,10 @@ atlantis server \
 | Project locks, global apply lock | `Lease` objects named `lock-*` / `cmdlock-*`. Creating one acquires the lock atomically. |
 | Plan/apply status per pull | `PullStatus` objects (`kubectl get pullstatuses`), updated with optimistic concurrency. |
 | Which replica handles a pull | Member Leases (`member-*`) plus rendezvous hashing. Webhooks are forwarded to the owner over `--cluster-port`. |
-| Two replicas on one pull | Per-pull Lease (`pulllock-*`), re-entrant within a replica and renewed while commands run. |
+| Two replicas on one pull | Per-pull Lease (`pulllock-*`), re-entrant within a replica and renewed while commands run. A replica stops trusting it after half the lease duration without a renewal, before anyone else may take it over; it then cancels the pull's queued work and refuses to start further steps. |
+| Where applies run | On the replica that made the plan (`PullStatus.spec.plannedBy`), because the plan files are on its volume. If that replica is restarting, the apply waits up to `--cluster-plan-holder-wait-seconds` (default 180) for it to return. Skipped when an external plan store is configured. |
+| Lost forwarding replies | Each forward has a request ID; retries reuse it and the owner runs it once. If delivery cannot be confirmed and the owner is alive, the command is not re-run elsewhere and the pull request gets a comment. |
+| Readiness | Depends only on local state (starting or draining), never on the shared API server, so an API outage cannot remove every replica from the Service. `atlantis_cluster_api_healthy` reports API reachability. |
 | Job pages and websockets | Proxied to whichever replica has the job. |
 | Housekeeping | The leader (`atlantis-leader` Lease) deletes Leases left by crashed replicas. |
 | Rolling update / scale down | The terminating replica marks itself draining. Its pulls move immediately, `/readyz` fails, and running jobs finish before it exits. |
@@ -65,7 +70,10 @@ To expose metrics, keep the `metrics.prometheus` block in the chart's
 | --- | --- |
 | `atlantis_cluster_members` | Live replicas seen by this replica |
 | `atlantis_cluster_leader` | 1 on the leader |
-| `atlantis_cluster_routing_forward_success` / `_forward_error` / `_local` | Command routing outcomes |
+| `atlantis_cluster_routing_forward_success` / `_forward_error` / `_forward_ambiguous` / `_local` | Command routing outcomes |
+| `atlantis_cluster_routing_plan_holder_wait` / `_plan_holder_timeout` | Applies that waited for a restarting plan holder, and waits that gave up |
+| `atlantis_cluster_api_healthy` | 1 when the last membership sync with the API server succeeded |
+| `atlantis_cluster_pull_lock_lost` | Pull locks this replica lost to another replica |
 | `atlantis_plan_risk_assessed{tier}` / `atlantis_plan_risk_error` | Plan risk results |
 | `atlantis_cmd_*`, `atlantis_api_*` | Existing Atlantis command metrics |
 
@@ -104,9 +112,13 @@ See [plan-risk.md](plan-risk.md).
 
 ## Limitations
 
-- **Plans are applied on the replica that made them.** If that replica is
-  lost, the user must re-plan unless the S3 plan store (`external_stores`) is
-  configured.
+- **Plans live on the replica that made them.** Restarts and rolling updates
+  keep them (StatefulSet volume, applies wait for the replica). Losing the
+  volume or scaling the replica away means re-planning, unless the S3 plan
+  store (`external_stores`) is configured.
+- **Fencing is best effort for a running terraform process.** A replica that
+  loses its pull lock stops starting steps, but a `terraform apply` already
+  running continues; the state backend's locking protects that window.
 - **Stale clones.** A replica that loses ownership keeps its clones until it
   restarts. They live on `emptyDir`, bounded by `dataVolume.sizeLimit`.
 - **Per-replica data.**

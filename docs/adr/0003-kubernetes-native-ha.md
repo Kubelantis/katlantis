@@ -61,15 +61,25 @@ node loss and rolling updates, and need no external database.
    - Tally/Prometheus metrics cover membership, leadership, routing and plan
      risk.
 
+7. **Hardening after review** (Jev-verified findings):
+   - Readiness no longer probes the shared API server.
+   - Pull locks are fenced: a replica stops trusting its lease after half its
+     duration without a renewal, and checks it before every workflow step.
+   - Forwarded commands carry a request ID, and are never re-run locally when
+     delivery is ambiguous and the owner is alive.
+   - The chart uses a StatefulSet with per-replica volumes, and applies are
+     routed to the replica that holds the plan (`PullStatus.spec.plannedBy`),
+     waiting for it while it restarts.
+
 ## Consequences
 
 - No BoltDB or Redis is needed. RBAC is namespace-scoped: Leases and
   PullStatuses only.
-- A plan is applied on the replica that made it. If that replica is lost, the
-  plan is lost unless the S3 plan store (`external_stores`) is configured, and
-  the user re-plans.
-- Former owners keep stale clones until they restart. The clones are on
-  `emptyDir`, bounded by `sizeLimit`.
+- A plan is applied on the replica that made it. Restarts keep it; losing
+  the replica's volume or scaling it away loses it unless the S3 plan store
+  (`external_stores`) is configured.
+- Former owners keep stale clones on their volume until the pull is closed
+  or the volume is recycled. The volume is bounded by `persistence.size`.
 - Some data is still per replica:
   - drift-detection results,
   - the index page's list of running jobs, which shows only jobs on the

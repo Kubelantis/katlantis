@@ -94,6 +94,7 @@ type UserConfig struct {
 	KubernetesIdentity              string `mapstructure:"kubernetes-identity"`
 	ClusterAddress                  string `mapstructure:"cluster-address"`
 	ClusterPort                     int    `mapstructure:"cluster-port"`
+	ClusterPlanHolderWaitSeconds    int    `mapstructure:"cluster-plan-holder-wait-seconds"`
 	ClusterToken                    string `mapstructure:"cluster-token"`
 	TracingEnabled                  bool   `mapstructure:"tracing-enabled"`
 	PlanRiskEnabled                 bool   `mapstructure:"plan-risk-enabled"`

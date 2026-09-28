@@ -117,6 +117,7 @@ var testFlags = map[string]any{
 	KubernetesIdentityFlag:           "atlantis-0",
 	ClusterAddressFlag:               "http://10.0.0.1:4142",
 	ClusterPortFlag:                  4143,
+	ClusterPlanHolderWaitFlag:        60,
 	ClusterTokenFlag:                 "cluster-token",
 	TracingEnabledFlag:               true,
 	PlanRiskEnabledFlag:              true,

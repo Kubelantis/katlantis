@@ -1,8 +1,13 @@
 {{- if not .Values.vcsSecretName }}
 {{- fail "vcsSecretName is required: create a Secret with your ATLANTIS_* VCS credentials" }}
 {{- end }}
+# A StatefulSet gives every replica a stable name (its identity in the
+# cluster) and its own volume. A restarted replica comes back with the same
+# identity and the same clones and plan files, so the pulls it owned and the
+# plans it made are still there; applies wait for it (see
+# --cluster-plan-holder-wait-seconds) instead of failing on another replica.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "atlantis.fullname" . }}
   labels: {{- include "atlantis.labels" . | nindent 4 }}
@@ -10,15 +15,19 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  serviceName: {{ include "atlantis.fullname" . }}-headless
+  # Replicas do not depend on each other to start.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  {{- if .Values.persistence.enabled }}
+  persistentVolumeClaimRetentionPolicy:
+    # A scaled-away replica's pulls move elsewhere, so its volume is useless.
+    whenScaled: Delete
+    whenDeleted: Retain
+  {{- end }}
   selector:
     matchLabels: {{- include "atlantis.selectorLabels" . | nindent 6 }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      # Start the new replica before stopping an old one so pulls always
-      # have an owner; the old replica drains its running jobs.
-      maxSurge: 1
-      maxUnavailable: 0
   template:
     metadata:
       labels:
@@ -59,6 +68,8 @@ spec:
               value: kubernetes
             - name: ATLANTIS_CLUSTER_PORT
               value: {{ .Values.cluster.port | quote }}
+            - name: ATLANTIS_CLUSTER_PLAN_HOLDER_WAIT_SECONDS
+              value: {{ .Values.cluster.planHolderWaitSeconds | quote }}
             - name: ATLANTIS_CLUSTER_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -106,9 +117,12 @@ spec:
             periodSeconds: 20
             failureThreshold: 3
           readinessProbe:
-            # Fails while draining and when the Kubernetes API is unreachable.
+            # Fails only while starting or draining. It deliberately ignores
+            # the Kubernetes API: every replica shares it, so an API outage
+            # must not take all of them out of the Service at once.
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
+            timeoutSeconds: 3
             failureThreshold: 2
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
@@ -118,9 +132,11 @@ spec:
               mountPath: /etc/atlantis
               readOnly: true
       volumes:
+        {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir:
-            sizeLimit: {{ .Values.dataVolume.sizeLimit }}
+            sizeLimit: {{ .Values.persistence.size }}
+        {{- end }}
         - name: config
           configMap:
             name: {{ include "atlantis.fullname" . }}
@@ -148,3 +164,17 @@ spec:
           labelSelector:
             matchLabels: {{- include "atlantis.selectorLabels" . | nindent 14 }}
         {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels: {{- include "atlantis.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

@@ -410,9 +410,15 @@ func (k *KubeDB) getPull(ctx context.Context, pull models.PullRequest) (*v1alpha
 
 // writePull creates or updates the object; obj is nil when none exists yet.
 // A lost create race is reported as a conflict so callers retry.
-func (k *KubeDB) writePull(ctx context.Context, obj *v1alpha1.PullStatus, pull models.PullRequest, status models.PullStatus) error {
+// plannedBy is the replica to record as the plan holder; empty keeps the
+// current value.
+func (k *KubeDB) writePull(ctx context.Context, obj *v1alpha1.PullStatus, pull models.PullRequest, status models.PullStatus, plannedBy string) error {
 	spec := pullStatusToSpec(status)
+	spec.PlannedBy = plannedBy
 	if obj != nil {
+		if plannedBy == "" {
+			spec.PlannedBy = obj.Spec.PlannedBy
+		}
 		obj.Spec = spec
 		return k.c.Update(ctx, obj)
 	}
@@ -456,7 +462,13 @@ func (k *KubeDB) UpdatePullWithResults(pull models.PullRequest, newResults []com
 			}
 		}
 		newStatus = db.MergePullResults(curr, pull, newResults)
-		return k.writePull(ctx, obj, pull, newStatus)
+		plannedBy := ""
+		for _, r := range newResults {
+			if r.Command == command.Plan {
+				plannedBy = k.identity
+			}
+		}
+		return k.writePull(ctx, obj, pull, newStatus, plannedBy)
 	})
 	if err != nil {
 		return models.PullStatus{}, fmt.Errorf("DB transaction failed: %w", err)
@@ -513,12 +525,23 @@ func (k *KubeDB) UpdateProjectStatus(pull models.PullRequest, workspace string, 
 				break
 			}
 		}
-		return k.writePull(ctx, obj, pull, curr)
+		return k.writePull(ctx, obj, pull, curr, "")
 	})
 	if err != nil {
 		return fmt.Errorf("DB transaction failed: %w", err)
 	}
 	return nil
+}
+
+// PlanHolder returns the replica that made the pull's latest plan, or "".
+func (k *KubeDB) PlanHolder(repo models.Repo, pullNum int) (string, error) {
+	ctx, cancel := k.ctx()
+	defer cancel()
+	obj, err := k.getPull(ctx, models.PullRequest{Num: pullNum, BaseRepo: repo})
+	if err != nil || obj == nil {
+		return "", err
+	}
+	return obj.Spec.PlannedBy, nil
 }
 
 // ---- lifecycle ----

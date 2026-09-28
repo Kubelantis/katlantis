@@ -443,6 +443,16 @@ ATLANTIS_CLUSTER_ADDRESS="http://10.0.0.5:4142"
 
 URL that other replicas use to reach this replica's internal cluster listener. Only used when `--locking-db-type=kubernetes`. Defaults to `http://$POD_IP:<cluster-port>`, so set the `POD_IP` environment variable from the downward API.
 
+### `--cluster-plan-holder-wait-seconds`
+
+```bash
+atlantis server --cluster-plan-holder-wait-seconds=180
+# or
+ATLANTIS_CLUSTER_PLAN_HOLDER_WAIT_SECONDS=180
+```
+
+When `--locking-db-type=kubernetes` and no external plan store is configured, `atlantis apply` runs on the replica that made the plan, because that is where the plan files are. If that replica is restarting (a StatefulSet pod keeps its name and volume), the apply waits up to this many seconds for it to come back before running on another replica, which may need a new plan. Defaults to `180`; a negative value disables waiting.
+
 ### `--cluster-port`
 
 ```bash

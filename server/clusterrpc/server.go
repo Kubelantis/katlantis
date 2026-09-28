@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -30,6 +32,36 @@ type Server struct {
 	Logger      logging.SimpleLogging
 	// Drain is checked before accepting forwarded commands.
 	Drain interface{ GetStatus() events.DrainStatus }
+
+	seenMu sync.Mutex
+	seen   map[string]time.Time
+}
+
+// seenTTL bounds how long request IDs are remembered; it only needs to
+// outlast the sender's retries.
+const seenTTL = 15 * time.Minute
+
+// firstDelivery records id and reports whether it had not been seen before.
+func (s *Server) firstDelivery(id string) bool {
+	if id == "" {
+		return true
+	}
+	s.seenMu.Lock()
+	defer s.seenMu.Unlock()
+	now := time.Now()
+	if s.seen == nil {
+		s.seen = map[string]time.Time{}
+	}
+	for k, t := range s.seen {
+		if now.Sub(t) > seenTTL {
+			delete(s.seen, k)
+		}
+	}
+	if _, dup := s.seen[id]; dup {
+		return false
+	}
+	s.seen[id] = now
+	return true
 }
 
 // Handler returns the internal HTTP handler.
@@ -78,6 +110,11 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	var req commandRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !s.firstDelivery(req.RequestID) {
+		// A retry of a request we already accepted: acknowledge, do not rerun.
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	ctx := traceContext(r)

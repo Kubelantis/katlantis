@@ -1,9 +1,16 @@
 package pulllock_test
 
 import (
+	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	coordinationv1 "k8s.io/api/coordination/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/runatlantis/atlantis/server/core/kube/kubetest"
 	"github.com/runatlantis/atlantis/server/core/kube/pulllock"
@@ -106,4 +113,60 @@ func TestConcurrentReplicasOneWinner(t *testing.T) {
 	}
 	wg.Wait()
 	Equals(t, 1, wins)
+}
+
+func TestLosingLeaseToAnotherReplicaFencesAndNotifies(t *testing.T) {
+	c, ns := kubetest.Client(t)
+	lost := make(chan string, 1)
+	a := pulllock.New(pulllock.Config{
+		Local: events.NewDefaultWorkingDirLocker(), Client: c, Namespace: ns, Identity: "a",
+		Duration: 3 * time.Second, Logger: logging.NewNoopLogger(t),
+		OnLost: func(repo string, pull int) { lost <- fmt.Sprintf("%s#%d", repo, pull) },
+	})
+	unlock, err := a.TryLockPull("org/repo", 1, command.Apply, events.WorkingDirLockMetadata{})
+	Ok(t, err)
+	defer unlock()
+	Assert(t, !a.LostPullLock("org/repo", 1), "fresh lease must be trusted")
+
+	// Another replica takes the lease over (as it would after A stopped
+	// renewing); A must notice on its next renewal.
+	var leases coordinationv1.LeaseList
+	Ok(t, c.List(context.Background(), &leases, client.InNamespace(ns)))
+	Equals(t, 1, len(leases.Items))
+	other := "b"
+	now := metav1.NewMicroTime(time.Now())
+	leases.Items[0].Spec.HolderIdentity, leases.Items[0].Spec.RenewTime = &other, &now
+	Ok(t, c.Update(context.Background(), &leases.Items[0]))
+
+	select {
+	case got := <-lost:
+		Equals(t, "org/repo#1", got)
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnLost was not called")
+	}
+	Assert(t, a.LostPullLock("org/repo", 1), "lost lease must fail the fencing check")
+
+	// A cannot re-enter a lost lease while B holds it.
+	_, err = a.TryLock("org/repo", 1, "default", "other", "", command.Plan, events.WorkingDirLockMetadata{})
+	ErrContains(t, "another Atlantis replica", err)
+}
+
+func TestUnrenewedLeaseStopsBeingTrusted(t *testing.T) {
+	c, ns := kubetest.Client(t)
+	var offset atomic.Int64
+	a := pulllock.New(pulllock.Config{
+		Local: events.NewDefaultWorkingDirLocker(), Client: c, Namespace: ns, Identity: "a",
+		Duration: 30 * time.Second, Logger: logging.NewNoopLogger(t),
+		Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load())) },
+	})
+	unlock, err := a.TryLockPull("org/repo", 1, command.Apply, events.WorkingDirLockMetadata{})
+	Ok(t, err)
+	defer unlock()
+	Assert(t, !a.LostPullLock("org/repo", 1), "fresh lease must be trusted")
+
+	// Half the lease duration without a renewal: other replicas may soon take
+	// it over, so this replica must stop starting steps before they can.
+	offset.Store(int64(16 * time.Second))
+	Assert(t, a.LostPullLock("org/repo", 1), "stale lease must fail the fencing check")
+	Assert(t, !a.LostPullLock("org/repo", 2), "pulls not locked here are not fenced")
 }
