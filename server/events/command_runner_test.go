@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/runatlantis/atlantis/server/core/boltdb"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/db"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/locking"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	"github.com/runatlantis/atlantis/server/events/command"
@@ -104,19 +104,17 @@ func setup(t *testing.T, options ...func(testConfig *TestConfig)) *vcsmocks.Mock
 	RegisterMockTestingT(t)
 
 	// create an empty DB
-	tmp := t.TempDir()
-	defaultBoltDB, err := boltdb.New(tmp)
+	defaultDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		defaultBoltDB.Close()
+		defaultDB.Close()
 	})
-	Ok(t, err)
 
 	testConfig := &TestConfig{
 		parallelPoolSize:      1,
 		SilenceNoProjects:     false,
 		StatusName:            "atlantis-test",
 		discardApprovalOnPlan: false,
-		database:              defaultBoltDB,
+		database:              defaultDB,
 		DisableUnlockLabel:    "do-not-unlock",
 	}
 
@@ -873,7 +871,7 @@ func TestPlanCommandRunner_HoldsPlanLockDuringStalePlanCleanup(t *testing.T) {
 
 func TestPlanCommandRunner_HoldsPlanLockDuringPullStatusWrite(t *testing.T) {
 	locker := events.NewDefaultWorkingDirLocker()
-	realDB := newTestBoltDB(t)
+	realDB := newTestDB(t)
 	writeObserved := false
 	database := assertPlanLockDB{
 		Database:     realDB,
@@ -941,7 +939,7 @@ func TestPlanCommandRunner_AutoplanHoldsPlanLockDuringStalePlanCleanup(t *testin
 
 func TestPlanCommandRunner_AutoplanHoldsPlanLockDuringPullStatusWrite(t *testing.T) {
 	locker := events.NewDefaultWorkingDirLocker()
-	realDB := newTestBoltDB(t)
+	realDB := newTestDB(t)
 	writeObserved := false
 	database := assertPlanLockDB{
 		Database:     realDB,
@@ -2191,13 +2189,12 @@ func TestRunUnlockCommandDoesntRetrieveLabelsIfDisableUnlockLabelNotSet(t *testi
 func TestRunAutoplanCommand_DeletePlans(t *testing.T) {
 	setup(t)
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
@@ -2350,13 +2347,12 @@ func TestRunAutoplan_NoProjectsEmptyPullStatusWriteFailureIsUserVisible(t *testi
 func TestRunAutoplanCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_False(t *testing.T) {
 	setup(t)
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 
 	When(projectCommandBuilder.BuildAutoplanCommands(Any[*command.Context]())).
 		ThenReturn([]command.ProjectContext{
@@ -2379,14 +2375,12 @@ func TestRunAutoplanCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_Fal
 
 func TestRunAutoplanCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_True(t *testing.T) {
 	vcsClient := setup(t)
-	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 
 	When(projectCommandBuilder.BuildAutoplanCommands(Any[*command.Context]())).
 		ThenReturn([]command.ProjectContext{
@@ -2412,13 +2406,12 @@ func TestRunAutoplanCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_Tru
 func TestRunCommentCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_False(t *testing.T) {
 	setup(t)
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 
 	When(projectCommandRunner.Plan(Any[command.ProjectContext]())).ThenReturn(command.ProjectCommandOutput{PlanSuccess: &models.PlanSuccess{}})
 	When(workingDir.GetPullDir(Any[models.Repo](), Any[models.PullRequest]())).ThenReturn(tmp, nil)
@@ -2435,14 +2428,12 @@ func TestRunCommentCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_Fals
 
 func TestRunCommentCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_True(t *testing.T) {
 	setup(t)
-	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
@@ -2457,13 +2448,12 @@ func TestRunCommentCommand_FailedPreWorkflowHook_FailOnPreWorkflowHookError_True
 func TestRunGenericPlanCommand_DeletePlans(t *testing.T) {
 	setup(t)
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
@@ -2495,13 +2485,12 @@ func TestRunGenericPlanCommand_DeletePlans(t *testing.T) {
 func TestRunSpecificPlanCommandDoesnt_DeletePlans(t *testing.T) {
 	setup(t)
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
@@ -2518,13 +2507,12 @@ func TestRunAutoplanCommandWithError_DeletePlans(t *testing.T) {
 	vcsClient := setup(t)
 
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
 	When(projectCommandBuilder.BuildAutoplanCommands(Any[*command.Context]())).
@@ -2573,13 +2561,12 @@ func TestRunGenericPlanCommand_DiscardApprovals(t *testing.T) {
 	})
 
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
@@ -2600,13 +2587,12 @@ func TestApplyMergeablityWhenPolicyCheckFails(t *testing.T) {
 	t.Log("if \"atlantis apply\" is run with failing policy check then apply is not performed")
 	setup(t)
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 
@@ -2622,7 +2608,7 @@ func TestApplyMergeablityWhenPolicyCheckFails(t *testing.T) {
 	When(githubGetter.GetPullRequest(Any[logging.SimpleLogging](), Eq(testdata.GithubRepo), Eq(testdata.Pull.Num))).ThenReturn(pull, nil)
 	When(eventParsing.ParseGithubPull(Any[logging.SimpleLogging](), Eq(pull))).ThenReturn(modelPull, modelPull.BaseRepo, testdata.GithubRepo, nil)
 
-	_, _ = boltDB.UpdatePullWithResults(modelPull, []command.ProjectResult{
+	_, _ = testDB.UpdatePullWithResults(modelPull, []command.ProjectResult{
 		{
 			Command: command.PolicyCheck,
 			ProjectCommandOutput: command.ProjectCommandOutput{
@@ -2782,16 +2768,15 @@ func TestRunApply_DiscardedProjects(t *testing.T) {
 	autoMerger.GlobalAutomerge = true
 	defer func() { autoMerger.GlobalAutomerge = false }()
 	tmp := t.TempDir()
-	boltDB, err := boltdb.New(tmp)
+	testDB := kubedbtest.New(t)
 	t.Cleanup(func() {
-		boltDB.Close()
+		testDB.Close()
 	})
-	Ok(t, err)
-	dbUpdater.Database = boltDB
-	applyCommandRunner.Database = boltDB
+	dbUpdater.Database = testDB
+	applyCommandRunner.Database = testDB
 	pull := testdata.Pull
 	pull.BaseRepo = testdata.GithubRepo
-	_, err = boltDB.UpdatePullWithResults(pull, []command.ProjectResult{
+	_, err := testDB.UpdatePullWithResults(pull, []command.ProjectResult{
 		{
 			Command:    command.Plan,
 			RepoRelDir: ".",
@@ -2805,7 +2790,7 @@ func TestRunApply_DiscardedProjects(t *testing.T) {
 		},
 	})
 	Ok(t, err)
-	Ok(t, boltDB.UpdateProjectStatus(pull, "default", ".", models.DiscardedPlanStatus))
+	Ok(t, testDB.UpdateProjectStatus(pull, "default", ".", models.DiscardedPlanStatus))
 	ghPull := &github.PullRequest{
 		State: github.Ptr("open"),
 	}

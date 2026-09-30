@@ -6,16 +6,13 @@ package events_test
 
 import (
 	"errors"
-	"fmt"
-	"os"
 	"testing"
 
-	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/logging"
 	"github.com/stretchr/testify/assert"
-	bolt "go.etcd.io/bbolt"
 
 	. "github.com/petergtz/pegomock/v4"
 	lockmocks "github.com/runatlantis/atlantis/server/core/locking/mocks"
@@ -35,18 +32,16 @@ func TestCleanUpPullWorkspaceErr(t *testing.T) {
 	RegisterMockTestingT(t)
 	logger := logging.NewNoopLogger(t)
 	w := mocks.NewMockWorkingDir()
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		db.Close()
 	})
-	Ok(t, err)
 	pce := events.PullClosedExecutor{
 		WorkingDir:         w,
 		PullClosedTemplate: &events.PullClosedEventTemplate{},
 		Database:           db,
 	}
-	err = errors.New("err")
+	err := errors.New("err")
 	When(w.Delete(logger, testdata.GithubRepo, testdata.Pull)).ThenReturn(err)
 	actualErr := pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
 	Equals(t, "cleaning workspace: err", actualErr.Error())
@@ -57,12 +52,10 @@ func TestCleanUpPullWorkspaceErrStillDeletesExternalPlans(t *testing.T) {
 	RegisterMockTestingT(t)
 	logger := logging.NewNoopLogger(t)
 	w := mocks.NewMockWorkingDir()
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		db.Close()
 	})
-	Ok(t, err)
 	store := &countingPlanStore{}
 	pce := events.PullClosedExecutor{
 		WorkingDir:         w,
@@ -83,19 +76,17 @@ func TestCleanUpPullUnlockErr(t *testing.T) {
 	w := mocks.NewMockWorkingDir()
 	ctrl := gomock.NewController(t)
 	l := lockmocks.NewMockLocker(ctrl)
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		db.Close()
 	})
-	Ok(t, err)
 	pce := events.PullClosedExecutor{
 		Locker:             l,
 		WorkingDir:         w,
 		Database:           db,
 		PullClosedTemplate: &events.PullClosedEventTemplate{},
 	}
-	err = errors.New("err")
+	err := errors.New("err")
 	l.EXPECT().UnlockByPull(testdata.GithubRepo.FullName, testdata.Pull.Num).Return(nil, err)
 	actualErr := pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
 	Equals(t, "cleaning up locks: err", actualErr.Error())
@@ -109,12 +100,10 @@ func TestCleanUpPullNoLocks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	l := lockmocks.NewMockLocker(ctrl)
 	cp := vcsmocks.NewMockClient()
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		db.Close()
 	})
-	Ok(t, err)
 	pce := events.PullClosedExecutor{
 		Locker:     l,
 		VCSClient:  cp,
@@ -122,7 +111,7 @@ func TestCleanUpPullNoLocks(t *testing.T) {
 		Database:   db,
 	}
 	l.EXPECT().UnlockByPull(testdata.GithubRepo.FullName, testdata.Pull.Num).Return(nil, nil)
-	err = pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
+	err := pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
 	Ok(t, err)
 	cp.VerifyWasCalled(Never()).CreateComment(Any[logging.SimpleLogging](), Any[models.Repo](), Any[int](), Any[string](), Any[string]())
 }
@@ -210,12 +199,10 @@ func TestCleanUpPullComments(t *testing.T) {
 			cp := vcsmocks.NewMockClient()
 			ctrl := gomock.NewController(t)
 			l := lockmocks.NewMockLocker(ctrl)
-			tmp := t.TempDir()
-			db, err := boltdb.New(tmp)
+			db := kubedbtest.New(t)
 			t.Cleanup(func() {
 				db.Close()
 			})
-			Ok(t, err)
 			pce := events.PullClosedExecutor{
 				Locker:     l,
 				VCSClient:  cp,
@@ -224,7 +211,7 @@ func TestCleanUpPullComments(t *testing.T) {
 			}
 			t.Log("testing: " + c.Description)
 			l.EXPECT().UnlockByPull(testdata.GithubRepo.FullName, testdata.Pull.Num).Return(c.Locks, nil)
-			err = pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
+			err := pce.CleanUpPull(logger, testdata.GithubRepo, testdata.Pull)
 			Ok(t, err)
 			_, _, _, comment, _ := cp.VerifyWasCalledOnce().CreateComment(
 				Any[logging.SimpleLogging](), Any[models.Repo](), Any[int](), Any[string](), Any[string]()).GetCapturedArguments()
@@ -254,32 +241,9 @@ func TestCleanUpLogStreaming(t *testing.T) {
 		go prjCmdOutHandler.Handle()
 		prjCmdOutHandler.Send(ctx, "Test Message", false)
 
-		// Create boltdb and add pull request.
-		var lockBucket = "bucket"
-		var configBucket = "configBucket"
-		var pullsBucketName = "pulls"
+		// Create the database and add a pull request.
 
-		f, err := os.CreateTemp("", "")
-		if err != nil {
-			panic(fmt.Errorf("failed to create temp file: %w", err))
-		}
-		path := f.Name()
-		f.Close() // nolint: errcheck
-
-		// Open the database.
-		boltDB, err := bolt.Open(path, 0600, nil)
-		if err != nil {
-			panic(fmt.Errorf("could not start bolt DB: %w", err))
-		}
-		if err := boltDB.Update(func(tx *bolt.Tx) error {
-			if _, err := tx.CreateBucketIfNotExists([]byte(pullsBucketName)); err != nil {
-				return fmt.Errorf("failed to create bucket: %w", err)
-			}
-			return nil
-		}); err != nil {
-			panic(fmt.Errorf("could not create bucket: %w", err))
-		}
-		database, _ := boltdb.NewWithDB(boltDB, lockBucket, configBucket)
+		database := kubedbtest.New(t)
 		result := []command.ProjectResult{
 			{
 				RepoRelDir:  testdata.GithubRepo.FullName,
@@ -289,7 +253,7 @@ func TestCleanUpLogStreaming(t *testing.T) {
 		}
 
 		// Create a new record for pull
-		_, err = database.UpdatePullWithResults(testdata.Pull, result)
+		_, err := database.UpdatePullWithResults(testdata.Pull, result)
 		Ok(t, err)
 
 		workingDir := mocks.NewMockWorkingDir()
@@ -345,12 +309,10 @@ func TestCleanUpPullWithCorrectJobContext(t *testing.T) {
 	resourceCleaner := mocks.NewMockResourceCleaner()
 
 	// Create temporary database
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		db.Close()
 	})
-	Ok(t, err)
 
 	// Create test data with multiple projects to verify all fields are populated correctly
 	testProjects := []command.ProjectResult{
@@ -367,7 +329,7 @@ func TestCleanUpPullWithCorrectJobContext(t *testing.T) {
 	}
 
 	// Add pull status to database
-	_, err = db.UpdatePullWithResults(testdata.Pull, testProjects)
+	_, err := db.UpdatePullWithResults(testdata.Pull, testProjects)
 	Ok(t, err)
 
 	// Create executor

@@ -16,8 +16,8 @@ import (
 	"github.com/runatlantis/atlantis/server/controllers"
 	"github.com/runatlantis/atlantis/server/controllers/web_templates"
 	tMocks "github.com/runatlantis/atlantis/server/controllers/web_templates/mocks"
-	"github.com/runatlantis/atlantis/server/core/boltdb"
 	"github.com/runatlantis/atlantis/server/core/db"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/locking"
 
 	"github.com/gorilla/mux"
@@ -302,13 +302,10 @@ func TestDeleteLock_UpdateProjectStatus(t *testing.T) {
 			RepoFullName: repoName,
 		},
 	}, nil)
-	var database db.Database
-	tmp := t.TempDir()
-	database, err := boltdb.New(tmp)
-	Ok(t, err)
+	var database db.Database = kubedbtest.New(t)
 	defer closeTestDatabase(t, database)
 	// Seed the DB with a successful plan for that project (that is later discarded).
-	_, err = database.UpdatePullWithResults(pull, []command.ProjectResult{
+	_, err := database.UpdatePullWithResults(pull, []command.ProjectResult{
 		{
 			Command:    command.Plan,
 			RepoRelDir: projectPath,
@@ -359,10 +356,7 @@ func TestDeleteLock_CommentFailed(t *testing.T) {
 	cp := vcsmocks.NewMockClient()
 	workingDir := mocks2.NewMockWorkingDir()
 	workingDirLocker := events.NewDefaultWorkingDirLocker()
-	var database db.Database
-	tmp := t.TempDir()
-	database, err := boltdb.New(tmp)
-	Ok(t, err)
+	var database db.Database = kubedbtest.New(t)
 	defer closeTestDatabase(t, database)
 	When(cp.CreateComment(Any[logging.SimpleLogging](), Any[models.Repo](), Any[int](), Any[string](), Any[string]())).ThenReturn(errors.New("err"))
 	lc := controllers.LocksController{
@@ -387,10 +381,7 @@ func TestDeleteLock_CommentSuccess(t *testing.T) {
 	dlc := mocks2.NewMockDeleteLockCommand()
 	workingDir := mocks2.NewMockWorkingDir()
 	workingDirLocker := events.NewDefaultWorkingDirLocker()
-	var database db.Database
-	tmp := t.TempDir()
-	database, err := boltdb.New(tmp)
-	Ok(t, err)
+	var database db.Database = kubedbtest.New(t)
 	defer closeTestDatabase(t, database)
 
 	pull := models.PullRequest{

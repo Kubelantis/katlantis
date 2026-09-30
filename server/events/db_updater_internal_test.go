@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
 	"github.com/runatlantis/atlantis/server/logging"
@@ -32,10 +32,8 @@ func TestDBUpdater_StaleApplyFailurePreservesNewerPullStatusWhenBaseDiffers(t *t
 
 func assertDBUpdaterSameHeadDifferentBaseApplyFailurePreservesCurrentBase(t *testing.T) {
 	t.Helper()
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	stalePull := models.PullRequest{
@@ -90,10 +88,8 @@ func assertDBUpdaterSameHeadDifferentBaseApplyFailurePreservesCurrentBase(t *tes
 
 func assertDBUpdaterStaleApplyPreservesNewerPullStatus(t *testing.T, output command.ProjectCommandOutput) {
 	t.Helper()
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	stalePull := models.PullRequest{
@@ -144,10 +140,8 @@ func assertDBUpdaterStaleApplyPreservesNewerPullStatus(t *testing.T, output comm
 }
 
 func TestDBUpdater_SameHeadApplyFailureWritesErroredApplyStatus(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	pull := models.PullRequest{
@@ -195,10 +189,8 @@ func TestDBUpdater_SameHeadApplyFailureWritesErroredApplyStatus(t *testing.T) {
 }
 
 func TestDBUpdater_SameHeadSameBaseApplyFailureWritesErroredApplyStatus(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	pull := models.PullRequest{
@@ -251,10 +243,8 @@ func TestDBUpdater_SameHeadDifferentBaseApplyFailureDoesNotOverwriteCurrentBaseS
 }
 
 func TestDBUpdater_BaseRetargetStaleCommandDoesNotWriteApplyError(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	stalePull := models.PullRequest{
@@ -308,10 +298,8 @@ func TestDBUpdater_BaseRetargetStaleCommandDoesNotWriteApplyError(t *testing.T) 
 }
 
 func TestDBUpdater_SameHeadApplyErrorDoesNotTriggerStaleResultGuard(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	pull := models.PullRequest{
@@ -359,10 +347,8 @@ func TestDBUpdater_SameHeadApplyErrorDoesNotTriggerStaleResultGuard(t *testing.T
 }
 
 func TestDBUpdater_StaleApplyResultGuardRunsBeforeDirNotExistFiltering(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	updater := &DBUpdater{Database: database}
 	stalePull := models.PullRequest{

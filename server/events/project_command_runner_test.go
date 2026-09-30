@@ -18,8 +18,9 @@ import (
 
 	"github.com/hashicorp/go-version"
 	. "github.com/petergtz/pegomock/v4"
-	"github.com/runatlantis/atlantis/server/core/boltdb"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	"github.com/runatlantis/atlantis/server/core/terraform"
 	tmocks "github.com/runatlantis/atlantis/server/core/terraform/mocks"
@@ -1054,7 +1055,7 @@ func TestProjectCommandRunner_ApplyDoesNotCallApplyStepWhenFinalValidationFails(
 }
 
 func TestApplyPlanValidator_RejectsWhenLivePullHeadChanged(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	newHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -1085,7 +1086,7 @@ func TestApplyPlanValidator_RejectsWhenLivePullHeadChanged(t *testing.T) {
 }
 
 func TestApplyPlanValidator_StaleCommandHeadDoesNotDeleteCurrentLivePlan(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	newHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -1122,7 +1123,7 @@ func TestApplyPlanValidator_StaleCommandHeadDoesNotDeleteCurrentLivePlan(t *test
 }
 
 func TestApplyPlanValidator_RejectsPullStatusFromDifferentBaseBranch(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	ctx := command.ProjectContext{
 		Log:         logging.NewNoopLogger(t),
@@ -1154,7 +1155,7 @@ func TestApplyPlanValidator_RejectsPullStatusFromDifferentBaseBranch(t *testing.
 }
 
 func TestApplyPlanValidator_RejectsRecordedPlanStatusWithEmptyBaseWhenLiveBaseKnown(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	ctx := command.ProjectContext{
@@ -1190,7 +1191,7 @@ func TestApplyPlanValidator_RejectsRecordedPlanStatusWithEmptyBaseWhenLiveBaseKn
 }
 
 func TestApplyPlanValidator_RejectsRecordedPlanStatusWithEmptyHeadWhenLiveHeadKnown(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	ctx := command.ProjectContext{
@@ -1225,7 +1226,7 @@ func TestApplyPlanValidator_RejectsRecordedPlanStatusWithEmptyHeadWhenLiveHeadKn
 }
 
 func TestApplyPlanValidator_RejectsWhenLiveBaseChangedSinceCommandStart(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	ctx := command.ProjectContext{
@@ -1259,7 +1260,7 @@ func TestApplyPlanValidator_RejectsWhenLiveBaseChangedSinceCommandStart(t *testi
 }
 
 func TestApplyPlanValidator_TargetedApplySameHeadDifferentBaseReturnsStaleCommandError(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	commandStartPull := models.PullRequest{
@@ -1498,7 +1499,7 @@ func assertTargetedStaleCommandClassifiedBeforeApplyValidation(t *testing.T) {
 }
 
 func TestValidatePlansForApply_CurrentPlanStillApplyableAfterStaleTargetedApplyFails(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	newHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -1546,7 +1547,7 @@ func TestValidatePlansForApply_CurrentPlanStillApplyableAfterStaleTargetedApplyF
 }
 
 func TestApplyPlanValidator_FailsClosedWhenLiveHeadFetchFails(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	ctx := command.ProjectContext{
 		Log:         logging.NewNoopLogger(t),
@@ -1575,7 +1576,7 @@ func TestApplyPlanValidator_FailsClosedWhenLiveHeadFetchFails(t *testing.T) {
 }
 
 func TestApplyPlanValidator_UsesInMemoryPullStatusForAPIApply(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	planContents := []byte("api plan")
 	ctx := command.ProjectContext{
@@ -1614,7 +1615,7 @@ func TestApplyPlanValidator_UsesInMemoryPullStatusForAPIApply(t *testing.T) {
 }
 
 func TestApplyPlanValidator_APIApplyWithBranchRefDoesNotCompareRefStringToLiveSHA(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	planContents := []byte("api branch plan")
@@ -1658,7 +1659,7 @@ func TestApplyPlanValidator_APIApplyWithBranchRefDoesNotCompareRefStringToLiveSH
 }
 
 func TestApplyPlanValidator_APIApplyWithResolvedCommitComparesToLiveSHA(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -1707,7 +1708,7 @@ func TestApplyPlanValidator_APIApplyWithResolvedCommitComparesToLiveSHA(t *testi
 }
 
 func TestApplyPlanValidator_APIApplyPrefersSeededPullStatusOverStaleDB(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	staleHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -1755,7 +1756,7 @@ func TestApplyPlanValidator_APIApplyPrefersSeededPullStatusOverStaleDB(t *testin
 }
 
 func TestApplyPlanValidator_APIInMemoryErroredPolicyCheckStatusRejectsApply(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	planContents := []byte("api policy errored plan")
@@ -1796,7 +1797,7 @@ func TestApplyPlanValidator_APIInMemoryErroredPolicyCheckStatusRejectsApply(t *t
 }
 
 func TestApplyPlanValidator_APIApplyUsesDBWhenNoSeededPullStatusExists(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	planContents := []byte("api db plan")
@@ -1829,7 +1830,7 @@ func TestApplyPlanValidator_APIApplyUsesDBWhenNoSeededPullStatusExists(t *testin
 }
 
 func TestApplyPlanValidator_CommentApplyStillFailsWhenDBPullStatusMissing(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	ctx := command.ProjectContext{
 		Log:         logging.NewNoopLogger(t),
@@ -1863,7 +1864,7 @@ func TestApplyPlanValidator_CommentApplyStillFailsWhenDBPullStatusMissing(t *tes
 }
 
 func TestApplyPlanValidator_DriftApplyUsesInMemoryPullStatusWithoutLiveHeadFetch(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	planContents := []byte("drift plan")
 	ctx := command.ProjectContext{
@@ -1902,7 +1903,7 @@ func TestApplyPlanValidator_DriftApplyUsesInMemoryPullStatusWithoutLiveHeadFetch
 }
 
 func TestApplyPlanValidator_RejectsPlanPathOutsideProjectDir(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	ctx := command.ProjectContext{
 		Log:              logging.NewNoopLogger(t),
@@ -1926,7 +1927,7 @@ func TestApplyPlanValidator_RejectsPlanPathOutsideProjectDir(t *testing.T) {
 }
 
 func TestApplyPlanValidator_RejectsTraversalPlanPathBeforeHashing(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	ctx := command.ProjectContext{
 		Log:              logging.NewNoopLogger(t),
@@ -1950,7 +1951,7 @@ func TestApplyPlanValidator_RejectsTraversalPlanPathBeforeHashing(t *testing.T) 
 }
 
 func TestApplyPlanValidator_HashesOnlyContainedPlanPath(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	planContents := []byte("plan")
 	ctx := command.ProjectContext{
@@ -1978,7 +1979,7 @@ func TestApplyPlanValidator_HashesOnlyContainedPlanPath(t *testing.T) {
 }
 
 func TestApplyPlanValidator_HashMismatchDoesNotDeleteNewerCurrentPlan(t *testing.T) {
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	ctx := command.ProjectContext{
 		Log:              logging.NewNoopLogger(t),
@@ -2013,7 +2014,7 @@ func TestProjectCommandRunner_ApplyRejectsPlanDeletedAfterBuilderValidation(t *t
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
 		LockURLGenerator:          mockURLGenerator{},
@@ -2073,7 +2074,7 @@ func TestProjectCommandRunner_ApplyLoadsPlanFromStoreBeforeValidation(t *testing
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	planContents := []byte("external-plan-bytes")
 	store := &restoringPlanStore{contents: planContents}
@@ -2137,7 +2138,7 @@ func TestProjectCommandRunner_ApplyUsesLoadedPlanHashWhenLocalFileDiffers(t *tes
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	repoDir := t.TempDir()
 	leftoverContents := []byte("leftover-local-plan")
 	storedContents := []byte("external-store-plan")
@@ -2200,7 +2201,7 @@ func TestProjectCommandRunner_ApplyDoesNotRunTerraformWhenLiveHeadChangedAfterCo
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	newHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	runner := &events.DefaultProjectCommandRunner{
@@ -2247,7 +2248,7 @@ func TestProjectCommandRunner_ApplyRejectsPlanMutatedByPreApplyRunStep(t *testin
 	RegisterMockTestingT(t)
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	calls := []string{}
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
@@ -2323,7 +2324,7 @@ func testProjectCommandRunnerRejectsPlanContentMutation(t *testing.T, newContent
 	RegisterMockTestingT(t)
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	calls := []string{}
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
@@ -2380,7 +2381,7 @@ func TestProjectCommandRunner_ApplyUsesExpectedPlanHash(t *testing.T) {
 	RegisterMockTestingT(t)
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	calls := []string{}
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
@@ -2542,7 +2543,7 @@ func TestProjectCommandRunner_ApplyRejectsFreshErroredPolicyCheckStatus(t *testi
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
 		LockURLGenerator:          mockURLGenerator{},
@@ -2589,7 +2590,7 @@ func TestProjectCommandRunner_ApplyDoesNotRunTerraformWhenPolicyStatusChangesAft
 	RegisterMockTestingT(t)
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	calls := []string{}
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
@@ -2651,7 +2652,7 @@ func TestProjectCommandRunner_ApplyRejectsStalePullStatusAfterBuilderValidation(
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
 		LockURLGenerator:          mockURLGenerator{},
@@ -2715,7 +2716,7 @@ func TestProjectCommandRunner_ApplyValidationFailureDoesNotLaunderStalePlanAsErr
 	mockApply := mocks.NewMockStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
-	db := newTestBoltDB(t)
+	db := newTestDB(t)
 	runner := &events.DefaultProjectCommandRunner{
 		Locker:                    mockLocker,
 		LockURLGenerator:          mockURLGenerator{},
@@ -2933,10 +2934,9 @@ func erroredPolicyProjectResult(ctx command.ProjectContext) command.ProjectResul
 	}
 }
 
-func newTestBoltDB(t *testing.T) *boltdb.BoltDB {
+func newTestDB(t *testing.T) *kubedb.KubeDB {
 	t.Helper()
-	db, err := boltdb.New(t.TempDir())
-	Ok(t, err)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
@@ -5337,7 +5337,7 @@ func TestDefaultProjectCommandRunner_ApplyCustomPlanPathWorkflow(t *testing.T) {
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
 	mockSender := mocks.NewMockWebhooksSender()
-	boltDB := newTestBoltDB(t)
+	testDB := newTestDB(t)
 	repoDir := t.TempDir()
 
 	runner := events.DefaultProjectCommandRunner{
@@ -5350,7 +5350,7 @@ func TestDefaultProjectCommandRunner_ApplyCustomPlanPathWorkflow(t *testing.T) {
 			WorkingDir: mockWorkingDir,
 		},
 		Webhooks:           mockSender,
-		ApplyPlanValidator: &events.DefaultApplyPlanValidator{PullStatusFetcher: boltDB},
+		ApplyPlanValidator: &events.DefaultApplyPlanValidator{PullStatusFetcher: testDB},
 	}
 
 	When(mockWorkingDir.GetWorkingDir(
@@ -5393,7 +5393,7 @@ func TestDefaultProjectCommandRunner_ApplyCustomPlanPathWorkflow(t *testing.T) {
 	_, err := os.Stat(filepath.Join(repoDir, runtime.GetPlanFilename(ctx.Workspace, ctx.ProjectName)))
 	Assert(t, os.IsNotExist(err), "convention plan file must not exist for this fixture")
 
-	_, err = boltDB.UpdatePullWithResults(ctx.Pull, []command.ProjectResult{
+	_, err = testDB.UpdatePullWithResults(ctx.Pull, []command.ProjectResult{
 		plannedProjectResult(ctx.RepoRelDir, ctx.Workspace, ctx.ProjectName),
 	})
 	Ok(t, err)
@@ -5425,7 +5425,7 @@ func TestDefaultProjectCommandRunner_ApplyManagedPlanFileStillRequired(t *testin
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
 	mockSender := mocks.NewMockWebhooksSender()
-	boltDB := newTestBoltDB(t)
+	testDB := newTestDB(t)
 	repoDir := t.TempDir()
 
 	runner := events.DefaultProjectCommandRunner{
@@ -5438,7 +5438,7 @@ func TestDefaultProjectCommandRunner_ApplyManagedPlanFileStillRequired(t *testin
 			WorkingDir: mockWorkingDir,
 		},
 		Webhooks:           mockSender,
-		ApplyPlanValidator: &events.DefaultApplyPlanValidator{PullStatusFetcher: boltDB},
+		ApplyPlanValidator: &events.DefaultApplyPlanValidator{PullStatusFetcher: testDB},
 	}
 
 	When(mockWorkingDir.GetWorkingDir(
@@ -5476,7 +5476,7 @@ func TestDefaultProjectCommandRunner_ApplyManagedPlanFileStillRequired(t *testin
 		},
 	}
 
-	_, err := boltDB.UpdatePullWithResults(ctx.Pull, []command.ProjectResult{
+	_, err := testDB.UpdatePullWithResults(ctx.Pull, []command.ProjectResult{
 		plannedProjectResult(ctx.RepoRelDir, ctx.Workspace, ctx.ProjectName),
 	})
 	Ok(t, err)

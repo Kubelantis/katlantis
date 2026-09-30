@@ -23,9 +23,9 @@ import (
 
 	"github.com/runatlantis/atlantis/server"
 	events_controllers "github.com/runatlantis/atlantis/server/controllers/events"
-	"github.com/runatlantis/atlantis/server/core/boltdb"
 	"github.com/runatlantis/atlantis/server/core/config"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/locking"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	runtimemocks "github.com/runatlantis/atlantis/server/core/runtime/mocks"
@@ -1387,8 +1387,7 @@ func setupE2E(t *testing.T, repoDir string, opt setupOption) (events_controllers
 
 	terraformClient, err := tfclient.NewClient(logger, distribution, binDir, cacheDir, "", "", "", "default-tf-version", "https://releases.hashicorp.com", true, false, projectCmdOutputHandler)
 	Ok(t, err)
-	b, err := boltdb.New(dataDir)
-	Ok(t, err)
+	b := kubedbtest.New(t)
 	database := b
 	lockingClient := locking.NewClient(b)
 	noOpLocker := locking.NewNoOpLocker()

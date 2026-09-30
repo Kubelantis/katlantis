@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/go-github/v88/github"
 	. "github.com/petergtz/pegomock/v4"
-	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/events"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -84,12 +84,10 @@ func TestPlanCommandRunner_IsSilenced(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Description, func(t *testing.T) {
 			// create an empty DB
-			tmp := t.TempDir()
-			db, err := boltdb.New(tmp)
+			db := kubedbtest.New(t)
 			t.Cleanup(func() {
 				db.Close()
 			})
-			Ok(t, err)
 
 			vcsClient := setup(t, func(tc *TestConfig) {
 				tc.SilenceNoProjects = true
@@ -114,7 +112,7 @@ func TestPlanCommandRunner_IsSilenced(t *testing.T) {
 				Trigger:  command.CommentTrigger,
 			}
 			if c.PrevPlanStored {
-				_, err = db.UpdatePullWithResults(modelPull, []command.ProjectResult{
+				_, err := db.UpdatePullWithResults(modelPull, []command.ProjectResult{
 					{
 						Command:    command.Plan,
 						RepoRelDir: "prevdir",
@@ -531,12 +529,10 @@ func TestPlanCommandRunner_ExecutionOrder(t *testing.T) {
 		t.Run(c.Description, func(t *testing.T) {
 			// vcsClient := setup(t)
 
-			tmp := t.TempDir()
-			db, err := boltdb.New(tmp)
+			db := kubedbtest.New(t)
 			t.Cleanup(func() {
 				db.Close()
 			})
-			Ok(t, err)
 
 			vcsClient := setup(t, func(tc *TestConfig) {
 				tc.database = db
@@ -756,12 +752,10 @@ func TestPlanCommandRunner_AtlantisApplyStatus(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Description, func(t *testing.T) {
 			// create an empty DB
-			tmp := t.TempDir()
-			db, err := boltdb.New(tmp)
+			db := kubedbtest.New(t)
 			t.Cleanup(func() {
 				db.Close()
 			})
-			Ok(t, err)
 
 			vcsClient := setup(t, func(tc *TestConfig) {
 				tc.database = db
@@ -782,7 +776,7 @@ func TestPlanCommandRunner_AtlantisApplyStatus(t *testing.T) {
 			}
 
 			if c.PrevPlanStored {
-				_, err = db.UpdatePullWithResults(modelPull, []command.ProjectResult{
+				_, err := db.UpdatePullWithResults(modelPull, []command.ProjectResult{
 					{
 						Command:    command.Plan,
 						RepoRelDir: "prevdir",
@@ -901,12 +895,10 @@ func TestPlanCommandRunner_AutoplanFetchesPullStatus(t *testing.T) {
 	RegisterMockTestingT(t)
 
 	t.Run("autoplan fetches pull request status", func(t *testing.T) {
-		tmp := t.TempDir()
-		db, err := boltdb.New(tmp)
+		db := kubedbtest.New(t)
 		t.Cleanup(func() {
 			db.Close()
 		})
-		Ok(t, err)
 
 		_ = setup(t, func(tc *TestConfig) {
 			tc.database = db
@@ -944,12 +936,10 @@ func TestPlanCommandRunner_AutoplanFetchesPullStatus(t *testing.T) {
 	})
 
 	t.Run("autoplan continues when FetchPullStatus returns error", func(t *testing.T) {
-		tmp := t.TempDir()
-		db, err := boltdb.New(tmp)
+		db := kubedbtest.New(t)
 		t.Cleanup(func() {
 			db.Close()
 		})
-		Ok(t, err)
 
 		_ = setup(t, func(tc *TestConfig) {
 			tc.database = db
@@ -1078,12 +1068,10 @@ func TestPlanCommandRunner_PendingApplyStatus(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.Description, func(t *testing.T) {
-			tmp := t.TempDir()
-			db, err := boltdb.New(tmp)
+			db := kubedbtest.New(t)
 			t.Cleanup(func() {
 				db.Close()
 			})
-			Ok(t, err)
 
 			_ = setup(t, func(tc *TestConfig) {
 				tc.database = db
@@ -1183,8 +1171,7 @@ func TestPlanCommandRunner_PersistenceBeforePublication(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				RegisterMockTestingT(t)
-				storage, err := boltdb.New(t.TempDir())
-				Ok(t, err)
+				storage := kubedbtest.New(t)
 				t.Cleanup(func() { storage.Close() })
 				database := &observingPlanDatabase{Database: storage}
 				if fail {

@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/go-github/v88/github"
 	. "github.com/petergtz/pegomock/v4"
-	"github.com/runatlantis/atlantis/server/core/boltdb"
 	"github.com/runatlantis/atlantis/server/core/db"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/locking"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	"github.com/runatlantis/atlantis/server/events"
@@ -174,12 +174,10 @@ func TestApplyCommandRunner_IsSilenced(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Description, func(t *testing.T) {
 			// create an empty DB
-			tmp := t.TempDir()
-			db, err := boltdb.New(tmp)
+			db := kubedbtest.New(t)
 			t.Cleanup(func() {
 				db.Close()
 			})
-			Ok(t, err)
 
 			vcsClient := setup(t, func(tc *TestConfig) {
 				tc.SilenceNoProjects = true
@@ -204,7 +202,7 @@ func TestApplyCommandRunner_IsSilenced(t *testing.T) {
 				Trigger:  command.CommentTrigger,
 			}
 			if c.PrevApplyStored {
-				_, err = db.UpdatePullWithResults(modelPull, []command.ProjectResult{
+				_, err := db.UpdatePullWithResults(modelPull, []command.ProjectResult{
 					{
 						Command:    command.Apply,
 						RepoRelDir: "prevdir",
@@ -213,7 +211,7 @@ func TestApplyCommandRunner_IsSilenced(t *testing.T) {
 				})
 				Ok(t, err)
 			} else if c.ExpVCSStatusSet && !c.Matched {
-				_, err = db.UpdatePullWithResults(modelPull, nil)
+				_, err := db.UpdatePullWithResults(modelPull, nil)
 				Ok(t, err)
 			}
 
@@ -465,7 +463,7 @@ func testApplyCommandRunnerTargetedApplyBlocksWhenPlanInFlight(t *testing.T, cmd
 }
 
 func TestApplyCommandRunner_RefreshesPullStatusAfterApplyLock(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	setup(t, func(tc *TestConfig) {
 		tc.database = database
 	})
@@ -497,7 +495,7 @@ func TestApplyCommandRunner_RefreshesPullStatusAfterApplyLock(t *testing.T) {
 }
 
 func TestApplyCommandRunner_GenericApplyUsesLiveHeadForBuilderValidation(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	liveBase := "release"
@@ -531,7 +529,7 @@ func TestApplyCommandRunner_GenericApplyUsesLiveHeadForBuilderValidation(t *test
 }
 
 func TestApplyCommandRunner_GenericApplyDoesNotRejectCurrentPlanAfterPullStatusRefresh(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
@@ -568,7 +566,7 @@ func TestApplyCommandRunner_GenericApplyDoesNotRejectCurrentPlanAfterPullStatusR
 }
 
 func TestApplyCommandRunner_GenericApplyRejectsRetargetedPRSameHead(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
 		tc.database = database
@@ -612,7 +610,7 @@ func TestApplyCommandRunner_GenericApplyRejectsRetargetedPRSameHead(t *testing.T
 }
 
 func TestApplyCommandRunner_TargetedApplyPreservesCommandStartHeadAfterLiveRefresh(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
@@ -646,7 +644,7 @@ func TestApplyCommandRunner_TargetedApplyPreservesCommandStartHeadAfterLiveRefre
 }
 
 func TestApplyCommandRunner_TargetedApplyParsedBeforePushDoesNotApplyNewHeadPlan(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	repoDir := t.TempDir()
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -718,7 +716,7 @@ func TestApplyCommandRunner_TargetedApplyParsedBeforePushDoesNotApplyNewHeadPlan
 }
 
 func TestApplyCommandRunner_TargetedApplyRejectsRetargetedPRSameHead(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	repoDir := t.TempDir()
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
@@ -770,7 +768,7 @@ func TestApplyCommandRunner_TargetedApplyRejectsRetargetedPRSameHead(t *testing.
 }
 
 func TestApplyCommandRunner_TargetedBaseRetargetPreservesCurrentPullStatus(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
 		tc.database = database
@@ -808,7 +806,7 @@ func TestApplyCommandRunner_TargetedBaseRetargetPreservesCurrentPullStatus(t *te
 }
 
 func TestApplyCommandRunner_TargetedStaleApplyRequirementFailurePreservesLivePullStatus(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
@@ -854,7 +852,7 @@ func TestApplyCommandRunner_TargetedStaleApplyRequirementFailurePreservesLivePul
 }
 
 func TestApplyCommandRunner_TargetedStaleApplyDependencyFailurePreservesLivePullStatus(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	liveHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	setup(t, func(tc *TestConfig) {
@@ -924,7 +922,7 @@ func TestApplyCommandRunner_AutomergeRequiresReturnedPullStatusMatchesLiveHead(t
 }
 
 func TestApplyCommandRunner_AutomergeSucceedsWhenReturnedPullStatusMatchesLiveHeadAndBase(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	vcsClient := setup(t, func(tc *TestConfig) {
 		tc.database = database
@@ -960,7 +958,7 @@ func TestApplyCommandRunner_AutomergeSucceedsWhenReturnedPullStatusMatchesLiveHe
 }
 
 func TestApplyCommandRunner_RefetchesLiveIdentityBeforeAutomerge(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	livePull := models.PullRequest{BaseRepo: testdata.GithubRepo, State: models.OpenPullState, Num: testdata.Pull.Num, HeadCommit: head, BaseBranch: "main"}
 	fetcher := &sequenceLivePullIdentityFetcher{identities: []models.PullRequest{livePull, livePull}}
@@ -998,7 +996,7 @@ func TestApplyCommandRunner_RefetchesLiveIdentityBeforeAutomerge(t *testing.T) {
 }
 
 func TestApplyCommandRunner_AutomergeStillSucceedsWhenLiveIdentityUnchangedAfterApply(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	livePull := models.PullRequest{BaseRepo: testdata.GithubRepo, State: models.OpenPullState, Num: testdata.Pull.Num, HeadCommit: head, BaseBranch: "main"}
 	fetcher := &sequenceLivePullIdentityFetcher{identities: []models.PullRequest{livePull, livePull}}
@@ -1036,7 +1034,7 @@ func TestApplyCommandRunner_AutomergeStillSucceedsWhenLiveIdentityUnchangedAfter
 }
 
 func TestApplyCommandRunner_UnchangedIdentityApplyPublishesSuccessCommitStatus(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	livePull := models.PullRequest{BaseRepo: testdata.GithubRepo, State: models.OpenPullState, Num: testdata.Pull.Num, HeadCommit: head, BaseBranch: "main"}
 	fetcher := &sequenceLivePullIdentityFetcher{identities: []models.PullRequest{livePull, livePull}}
@@ -1148,7 +1146,7 @@ func assertApplyCommandRunnerDoesNotAutomergeAfterPreservedStaleApply(t *testing
 
 func assertApplyCommandRunnerDoesNotAutomergeAfterPreservedStaleApplyWithBase(t *testing.T, liveHead string, liveBase string, applyOutput command.ProjectCommandOutput) {
 	t.Helper()
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	oldHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	recordedHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	commandHead := oldHead
@@ -1201,7 +1199,7 @@ func assertApplyCommandRunnerDoesNotAutomergeAfterPreservedStaleApplyWithBase(t 
 
 func runApplyCommandRunnerWithBaseChangeDuringApply(t *testing.T) (db.Database, *vcsmocks.MockClient, *command.Context, models.PullRequest) {
 	t.Helper()
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	initialPull := models.PullRequest{BaseRepo: testdata.GithubRepo, State: models.OpenPullState, Num: testdata.Pull.Num, HeadCommit: head, BaseBranch: "main"}
 	finalPull := initialPull
@@ -1259,7 +1257,7 @@ func (f *sequenceLivePullIdentityFetcher) GetLivePullIdentity(command.ProjectCon
 }
 
 func TestApplyCommandRunner_GenericApplyHoldsApplyLockDuringPullStatusRefresh(t *testing.T) {
-	realDB := newTestBoltDB(t)
+	realDB := newTestDB(t)
 	locker := events.NewDefaultWorkingDirLocker()
 	refreshObserved := false
 	database := assertApplyLockDB{
@@ -1388,7 +1386,7 @@ func TestApplyCommandRunner_TargetedApplyHoldsApplyLockDuringExecution(t *testin
 }
 
 func TestBuildApplyCommands_UsesFreshPullStatusAfterPlanFinishes(t *testing.T) {
-	database := newTestBoltDB(t)
+	database := newTestDB(t)
 	setup(t, func(tc *TestConfig) {
 		tc.database = database
 	})
@@ -1421,7 +1419,7 @@ func TestBuildApplyCommands_UsesFreshPullStatusAfterPlanFinishes(t *testing.T) {
 }
 
 func TestApplyCommandRunner_PullStatusRefreshFailureFailsClosed(t *testing.T) {
-	realDB := newTestBoltDB(t)
+	realDB := newTestDB(t)
 	database := failingGetPullStatusDB{Database: realDB, err: errors.New("db unavailable")}
 	vcsClient := setup(t, func(tc *TestConfig) {
 		tc.database = database
@@ -1757,10 +1755,8 @@ func TestApplyCommandRunner_NoChangesCount(t *testing.T) {
 	logger := logging.NewNoopLogger(t)
 	RegisterMockTestingT(t)
 
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() { db.Close() })
-	Ok(t, err)
 
 	setup(t, func(tc *TestConfig) {
 		tc.SilenceNoProjects = true
@@ -1771,7 +1767,7 @@ func TestApplyCommandRunner_NoChangesCount(t *testing.T) {
 	modelPull := models.PullRequest{BaseRepo: testdata.GithubRepo, State: models.OpenPullState, Num: testdata.Pull.Num}
 
 	// Seed the DB: one applied project and one project that planned with no changes.
-	_, err = db.UpdatePullWithResults(modelPull, []command.ProjectResult{
+	_, err := db.UpdatePullWithResults(modelPull, []command.ProjectResult{
 		{
 			Command:    command.Apply,
 			RepoRelDir: "dir1",

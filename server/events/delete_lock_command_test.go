@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	. "github.com/petergtz/pegomock/v4"
-	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	lockmocks "github.com/runatlantis/atlantis/server/core/locking/mocks"
 	"github.com/runatlantis/atlantis/server/events"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -62,12 +62,10 @@ func TestDeleteLock_Success(t *testing.T) {
 	}, nil)
 	workingDir := events.NewMockWorkingDir()
 	workingDirLocker := events.NewDefaultWorkingDirLocker()
-	tmp := t.TempDir()
-	db, err := boltdb.New(tmp)
+	db := kubedbtest.New(t)
 	t.Cleanup(func() {
 		db.Close()
 	})
-	Ok(t, err)
 	dlc := events.DefaultDeleteLockCommand{
 		Locker:           l,
 		Database:         db,

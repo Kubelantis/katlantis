@@ -8,7 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/runatlantis/atlantis/server/core/boltdb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/locking"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -104,10 +105,8 @@ func (f *sequenceApplyIdentityFetcher) GetLivePullIdentity(command.ProjectContex
 }
 
 func TestApplyCommandRunner_DeferredApplySuccessPublishesAfterFinalFreshness(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	pull := models.PullRequest{
 		BaseRepo:   testdata.GithubRepo,
@@ -148,10 +147,8 @@ func TestApplyCommandRunner_DeferredApplySuccessPublishesAfterFinalFreshness(t *
 }
 
 func TestApplyCommandRunner_DeferredApplySuccessFailsWhenFinalFreshnessFails(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
+	var err error
 	t.Cleanup(func() { database.Close() })
 	initialPull := models.PullRequest{
 		BaseRepo:   testdata.GithubRepo,
@@ -193,7 +190,7 @@ func TestApplyCommandRunner_DeferredApplySuccessFailsWhenFinalFreshnessFails(t *
 	}
 }
 
-func newInternalApplyCommandRunner(t *testing.T, database *boltdb.BoltDB, builder ProjectApplyCommandBuilder, projectRunner ProjectApplyCommandRunner, liveFetcher LivePullHeadFetcher) *ApplyCommandRunner {
+func newInternalApplyCommandRunner(t *testing.T, database *kubedb.KubeDB, builder ProjectApplyCommandBuilder, projectRunner ProjectApplyCommandRunner, liveFetcher LivePullHeadFetcher) *ApplyCommandRunner {
 	t.Helper()
 	vcsClient := &vcs.NotConfiguredVCSClient{Host: models.Github}
 	pullUpdater := &PullUpdater{
@@ -247,10 +244,7 @@ func internalPlannedProjectResult(repoRelDir, workspace, projectName string) com
 }
 
 func TestApplyCommandRunner_StaleCommandResultWithEmptyPullStatusDoesNotPublishZeroZeroSuccess(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
 	t.Cleanup(func() { database.Close() })
 	vcsClient := &vcs.NotConfiguredVCSClient{Host: models.Github}
 	commitUpdater := &recordingApplyStatusUpdater{}
@@ -326,10 +320,7 @@ func TestApplyCommandRunner_StaleCommandResultWithEmptyPullStatusDoesNotPublishZ
 }
 
 func TestApplyCommandRunner_NoPlanLegacyEmptyIdentityDoesNotPublishZeroZeroSuccess(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
 	t.Cleanup(func() { database.Close() })
 	legacyPull := models.PullRequest{
 		BaseRepo: testdata.GithubRepo,
@@ -398,10 +389,7 @@ func TestApplyCommandRunner_NoPlanLegacyEmptyIdentityDoesNotPublishZeroZeroSucce
 }
 
 func TestApplyCommandRunner_SilencedNoProjectLegacyEmptyIdentityDoesNotPublishZeroZeroSuccess(t *testing.T) {
-	database, err := boltdb.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := kubedbtest.New(t)
 	t.Cleanup(func() { database.Close() })
 	legacyPull := models.PullRequest{
 		BaseRepo: testdata.GithubRepo,
