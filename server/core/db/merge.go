@@ -6,8 +6,8 @@ import (
 )
 
 // MergePullResults folds newResults into the current pull status and returns
-// the status that should be persisted. It mirrors the semantics of the BoltDB
-// and Redis backends so every Database implementation behaves identically:
+// the status that should be persisted. It is shared by Database
+// implementations so they all behave identically (see dbtest):
 //   - if there is no current status, or it belongs to an older head commit or
 //     a different base branch, the status is rebuilt from newResults while
 //     preserving any policy approvals of matching projects;

@@ -64,8 +64,6 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: POD_IP
               valueFrom: {fieldRef: {fieldPath: status.podIP}}
-            - name: ATLANTIS_LOCKING_DB_TYPE
-              value: kubernetes
             - name: ATLANTIS_CLUSTER_PORT
               value: {{ .Values.cluster.port | quote }}
             - name: ATLANTIS_CLUSTER_PLAN_HOLDER_WAIT_SECONDS

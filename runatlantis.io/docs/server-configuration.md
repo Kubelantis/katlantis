@@ -441,7 +441,7 @@ atlantis server --cluster-address="http://10.0.0.5:4142"
 ATLANTIS_CLUSTER_ADDRESS="http://10.0.0.5:4142"
 ```
 
-URL that other replicas use to reach this replica's internal cluster listener. Only used when `--locking-db-type=kubernetes`. Defaults to `http://$POD_IP:<cluster-port>`, so set the `POD_IP` environment variable from the downward API.
+URL that other replicas use to reach this replica's internal cluster listener. Defaults to `http://$POD_IP:<cluster-port>`, so set the `POD_IP` environment variable from the downward API.
 
 ### `--cluster-plan-holder-wait-seconds`
 
@@ -451,7 +451,7 @@ atlantis server --cluster-plan-holder-wait-seconds=180
 ATLANTIS_CLUSTER_PLAN_HOLDER_WAIT_SECONDS=180
 ```
 
-When `--locking-db-type=kubernetes` and no external plan store is configured, `atlantis apply` runs on the replica that made the plan, because that is where the plan files are. If that replica is restarting (a StatefulSet pod keeps its name and volume), the apply waits up to this many seconds for it to come back before running on another replica, which may need a new plan. Defaults to `180`; a negative value disables waiting.
+When no external plan store is configured, `atlantis apply` runs on the replica that made the plan, because that is where the plan files are. If that replica is restarting (a StatefulSet pod keeps its name and volume), the apply waits up to this many seconds for it to come back before running on another replica, which may need a new plan. Defaults to `180`; a negative value disables waiting.
 
 ### `--cluster-port`
 
@@ -461,7 +461,7 @@ atlantis server --cluster-port=4142
 ATLANTIS_CLUSTER_PORT=4142
 ```
 
-Port of the internal listener used for traffic between replicas (forwarded commands, pull cleanup, and proxied job output) when `--locking-db-type=kubernetes`. Defaults to `4142`. Do not expose this port through an Ingress or public Service.
+Port of the internal listener used for traffic between replicas (forwarded commands, pull cleanup, and proxied job output). Defaults to `4142`. Do not expose this port through an Ingress or public Service.
 
 ### `--cluster-token`
 
@@ -471,7 +471,7 @@ atlantis server --cluster-token="<secret>"
 ATLANTIS_CLUSTER_TOKEN="<secret>"
 ```
 
-Shared secret that authenticates calls between replicas. Required when `--locking-db-type=kubernetes`. Mount it from a Kubernetes Secret with the `ATLANTIS_CLUSTER_TOKEN` environment variable.
+Shared secret that authenticates calls between replicas. Required . Mount it from a Kubernetes Secret with the `ATLANTIS_CLUSTER_TOKEN` environment variable.
 
 ### `--config` <Badge text="v0.1.3+" type="info"/>
 
@@ -1183,7 +1183,7 @@ atlantis server --kubernetes-identity="atlantis-0"
 ATLANTIS_KUBERNETES_IDENTITY="atlantis-0"
 ```
 
-Unique identity of this replica, used as the holder of its Leases. Only used when `--locking-db-type=kubernetes`. Defaults to `$POD_NAME`, then the hostname.
+Unique identity of this replica, used as the holder of its Leases. Defaults to `$POD_NAME`, then the hostname.
 
 ### `--kubernetes-namespace`
 
@@ -1193,7 +1193,7 @@ atlantis server --kubernetes-namespace="atlantis"
 ATLANTIS_KUBERNETES_NAMESPACE="atlantis"
 ```
 
-Namespace in which Atlantis stores its Leases and `PullStatus` resources. Only used when `--locking-db-type=kubernetes`. Defaults to `$POD_NAMESPACE`, then the service account's namespace.
+Namespace in which Atlantis stores its Leases and `PullStatus` resources. Defaults to `$POD_NAMESPACE`, then the service account's namespace.
 
 ### `--language` <Badge text="v0.45.0+" type="info"/>
 
@@ -1245,22 +1245,6 @@ command_titles:
 
 For complete markdown wording customization, keep using
 `--markdown-template-overrides-dir`.
-
-### `--locking-db-type` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --locking-db-type="<boltdb|redis|kubernetes>"
-# or
-ATLANTIS_LOCKING_DB_TYPE="<boltdb|redis|kubernetes>"
-```
-
-The locking database type to use for storing plan and apply locks. Defaults to `boltdb`.
-
-Notes:
-
-- If set to `boltdb`, only one process may have access to the boltdb instance.
-- If set to `kubernetes`, locks are stored as `coordination.k8s.io` Leases and pull status as `atlantis.runatlantis.io/v1alpha1` `PullStatus` resources, and any number of replicas can run. Each pull request is handled by one replica; webhooks received by another replica are forwarded to it. Requires `--cluster-token`. See the Helm chart in `deploy/helm/atlantis`.
-- If set to `redis`, use `--redis-host` and `--redis-port` for single-node mode, or `--redis-cluster-addresses` for Redis Cluster mode. Use `--redis-password` and (optionally) `--redis-username` only if your Redis deployment requires authentication.
 
 ### `--log-level` <Badge text="v0.1.3+" type="info"/>
 
@@ -1405,90 +1389,6 @@ ATLANTIS_QUIET_POLICY_CHECKS=true
 ```
 
 Exclude policy check comments from pull requests unless there's an actual error from conftest. This also excludes warnings. Defaults to `false`.
-
-### `--redis-cluster-addresses`
-
-```bash
-atlantis server --redis-cluster-addresses="redis-node-0:6379,redis-node-1:6379,redis-node-2:6379"
-# or
-ATLANTIS_REDIS_CLUSTER_ADDRESSES="redis-node-0:6379,redis-node-1:6379,redis-node-2:6379"
-```
-
-Comma-delimited list of Redis cluster node addresses in the format `host:port`. When set, Atlantis uses Redis Cluster mode instead of single-node mode. This is mutually exclusive with `--redis-host`/`--redis-port` (which are used for single-node mode).
-
-### `--redis-db` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-db=0
-# or
-ATLANTIS_REDIS_DB=0
-```
-
-The Redis Database to use when using a Locking DB type of `redis`. Defaults to `0`.
-
-### `--redis-host` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-host="localhost"
-# or
-ATLANTIS_REDIS_HOST="localhost"
-```
-
-The Redis Hostname for when using a Locking DB type of `redis`.
-
-### `--redis-insecure-skip-verify` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-insecure-skip-verify=false
-# or
-ATLANTIS_REDIS_INSECURE_SKIP_VERIFY=false
-```
-
-Controls whether the Redis client verifies the Redis server's certificate chain and host name. If true, accepts any certificate presented by the server and any host name in that certificate. Defaults to `false`.
-
-::: warning SECURITY WARNING
-If this is enabled, TLS is susceptible to machine-in-the-middle attacks unless custom verification is used.
-:::
-
-### `--redis-password` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-password="password123"
-# or (recommended)
-ATLANTIS_REDIS_PASSWORD="password123"
-```
-
-The Redis Password for when using a Locking DB type of `redis`.
-
-### `--redis-port` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-port=6379
-# or
-ATLANTIS_REDIS_PORT=6379
-```
-
-The Redis Port for when using a Locking DB type of `redis`. Defaults to `6379`.
-
-### `--redis-tls-enabled` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-tls-enabled=false
-# or
-ATLANTIS_REDIS_TLS_ENABLED=false
-```
-
-Enables a TLS connection, with min version of 1.2, to Redis when using a Locking DB type of `redis`. Defaults to `false`.
-
-### `--redis-username`
-
-```bash
-atlantis server --redis-username="myuser"
-# or
-ATLANTIS_REDIS_USERNAME="myuser"
-```
-
-The Redis Username for when using a Locking DB type of `redis`. Useful when Redis is configured with ACL-based authentication.
 
 ### `--repo-allowlist` <Badge text="v0.13.0" type="info"/>
 

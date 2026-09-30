@@ -23,6 +23,7 @@ import (
 	events_controllers "github.com/runatlantis/atlantis/server/controllers/events"
 	"github.com/runatlantis/atlantis/server/controllers/web_templates"
 	tMocks "github.com/runatlantis/atlantis/server/controllers/web_templates/mocks"
+	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/locking"
 	lockMocks "github.com/runatlantis/atlantis/server/core/locking/mocks"
 	"github.com/runatlantis/atlantis/server/events/models"
@@ -35,7 +36,6 @@ import (
 const (
 	testAtlantisVersion = "1.0.0"
 	testAtlantisUrl     = "http://example.com"
-	testLockingDBType   = cmd.DefaultLockingDBType
 	testGitHubHostName  = cmd.DefaultGHHostname
 	testGitHubUser      = "user"
 )
@@ -45,12 +45,15 @@ func TestNewServer_GitHubUser(t *testing.T) {
 	tmpDir := t.TempDir()
 	_, err := server.NewServer(
 		server.UserConfig{
-			DataDir:        tmpDir,
-			AtlantisURL:    testAtlantisUrl,
-			LockingDBType:  testLockingDBType,
-			GithubHostname: testGitHubHostName,
-			GithubUser:     testGitHubUser,
+			DataDir:             tmpDir,
+			AtlantisURL:         testAtlantisUrl,
+			KubernetesNamespace: "atlantis",
+			KubernetesIdentity:  "atlantis-0",
+			ClusterAddress:      "http://127.0.0.1:4142",
+			GithubHostname:      testGitHubHostName,
+			GithubUser:          testGitHubUser,
 		}, server.Config{
+			KubeClient:      kubedbtest.FakeClient(t),
 			AtlantisVersion: testAtlantisVersion,
 		},
 	)
@@ -63,12 +66,15 @@ func TestNewServer_EnableDriftDetectionWiresServices(t *testing.T) {
 		server.UserConfig{
 			DataDir:              tmpDir,
 			AtlantisURL:          testAtlantisUrl,
-			LockingDBType:        testLockingDBType,
+			KubernetesNamespace:  "atlantis",
+			KubernetesIdentity:   "atlantis-0",
+			ClusterAddress:       "http://127.0.0.1:4142",
 			GithubHostname:       testGitHubHostName,
 			GithubUser:           testGitHubUser,
 			APISecret:            "token",
 			EnableDriftDetection: true,
 		}, server.Config{
+			KubeClient:      kubedbtest.FakeClient(t),
 			AtlantisVersion: testAtlantisVersion,
 		},
 	)
@@ -86,13 +92,16 @@ func TestNewServer_EnableDriftRemediationWiresApplyOptIn(t *testing.T) {
 		server.UserConfig{
 			DataDir:                tmpDir,
 			AtlantisURL:            testAtlantisUrl,
-			LockingDBType:          testLockingDBType,
+			KubernetesNamespace:    "atlantis",
+			KubernetesIdentity:     "atlantis-0",
+			ClusterAddress:         "http://127.0.0.1:4142",
 			GithubHostname:         testGitHubHostName,
 			GithubUser:             testGitHubUser,
 			APISecret:              "token",
 			EnableDriftDetection:   true,
 			EnableDriftRemediation: true,
 		}, server.Config{
+			KubeClient:      kubedbtest.FakeClient(t),
 			AtlantisVersion: testAtlantisVersion,
 		},
 	)
@@ -109,12 +118,15 @@ func TestNewServer_EnableDriftRemediationRequiresDriftDetection(t *testing.T) {
 		server.UserConfig{
 			DataDir:                tmpDir,
 			AtlantisURL:            testAtlantisUrl,
-			LockingDBType:          testLockingDBType,
+			KubernetesNamespace:    "atlantis",
+			KubernetesIdentity:     "atlantis-0",
+			ClusterAddress:         "http://127.0.0.1:4142",
 			GithubHostname:         testGitHubHostName,
 			GithubUser:             testGitHubUser,
 			APISecret:              "token",
 			EnableDriftRemediation: true,
 		}, server.Config{
+			KubeClient:      kubedbtest.FakeClient(t),
 			AtlantisVersion: testAtlantisVersion,
 		},
 	)
@@ -126,9 +138,13 @@ func TestNewServer_EnableDriftRemediationRequiresDriftDetection(t *testing.T) {
 func TestNewServer_InvalidAtlantisURL(t *testing.T) {
 	tmpDir := t.TempDir()
 	_, err := server.NewServer(server.UserConfig{
-		DataDir:     tmpDir,
-		AtlantisURL: "example.com",
+		DataDir:             tmpDir,
+		AtlantisURL:         "example.com",
+		KubernetesNamespace: "atlantis",
+		KubernetesIdentity:  "atlantis-0",
+		ClusterAddress:      "http://127.0.0.1:4142",
 	}, server.Config{
+		KubeClient:      kubedbtest.FakeClient(t),
 		AtlantisURLFlag: "atlantis-url",
 	})
 	ErrEquals(t, "parsing --atlantis-url flag \"example.com\": http or https must be specified", err)

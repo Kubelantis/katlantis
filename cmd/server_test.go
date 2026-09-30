@@ -112,7 +112,6 @@ var testFlags = map[string]any{
 	JobLogDirFlag:                    "/job-logs",
 	LanguageFlag:                     "es",
 	LanguageConfigFileFlag:           "",
-	LockingDBType:                    "boltdb",
 	KubernetesNamespaceFlag:          "atlantis",
 	KubernetesIdentityFlag:           "atlantis-0",
 	ClusterAddressFlag:               "http://10.0.0.1:4142",
@@ -139,14 +138,6 @@ var testFlags = map[string]any{
 	ParallelApplyFlag:                true,
 	PendingApplyStatusFlag:           false,
 	QuietPolicyChecks:                false,
-	RedisHost:                        "",
-	RedisInsecureSkipVerify:          false,
-	RedisPassword:                    "",
-	RedisPort:                        6379,
-	RedisTLSEnabled:                  false,
-	RedisDB:                          0,
-	RedisUsername:                    "",
-	RedisClusterAddresses:            "",
 	RepoAllowlistFlag:                "github.com/runatlantis/atlantis",
 	RepoConfigFlag:                   "",
 	RepoConfigJSONFlag:               "",
@@ -1517,9 +1508,10 @@ func TestExecute_GiteaBaseURLPort(t *testing.T) {
 
 func TestSanitizeKubernetesServiceLinks(t *testing.T) {
 	t.Log("Kubernetes service link env vars should be sanitized to defaults")
-	// Simulate Kubernetes injecting ATLANTIS_REDIS_PORT=tcp://10.x.x.x:6379
-	envKey := "ATLANTIS_REDIS_PORT"
-	os.Setenv(envKey, "tcp://10.96.0.15:6379") // nolint: errcheck
+	// Simulate Kubernetes injecting ATLANTIS_CLUSTER_PORT=tcp://10.x.x.x:4142
+	// for a Service named "atlantis-cluster".
+	envKey := "ATLANTIS_CLUSTER_PORT"
+	os.Setenv(envKey, "tcp://10.96.0.15:4142") // nolint: errcheck
 	defer os.Unsetenv(envKey)
 
 	c := setupWithDefaults(map[string]any{
@@ -1529,13 +1521,13 @@ func TestSanitizeKubernetesServiceLinks(t *testing.T) {
 	}, t)
 	err := c.Execute()
 	Ok(t, err)
-	Equals(t, DefaultRedisPort, passedConfig.RedisPort)
+	Equals(t, DefaultClusterPort, passedConfig.ClusterPort)
 }
 
 func TestSanitizeKubernetesServiceLinks_UDPIgnored(t *testing.T) {
 	t.Log("UDP service link env vars should also be sanitized")
-	envKey := "ATLANTIS_REDIS_PORT"
-	os.Setenv(envKey, "udp://10.96.0.15:6379") // nolint: errcheck
+	envKey := "ATLANTIS_CLUSTER_PORT"
+	os.Setenv(envKey, "udp://10.96.0.15:4142") // nolint: errcheck
 	defer os.Unsetenv(envKey)
 
 	c := setupWithDefaults(map[string]any{
@@ -1545,7 +1537,7 @@ func TestSanitizeKubernetesServiceLinks_UDPIgnored(t *testing.T) {
 	}, t)
 	err := c.Execute()
 	Ok(t, err)
-	Equals(t, DefaultRedisPort, passedConfig.RedisPort)
+	Equals(t, DefaultClusterPort, passedConfig.ClusterPort)
 }
 
 func TestDefaultAutoplanFileList_ContainsExpectedPatterns(t *testing.T) {

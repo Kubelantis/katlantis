@@ -115,7 +115,6 @@ const (
 	APISecretFlag                    = "api-secret"
 	HidePrevPlanComments             = "hide-prev-plan-comments"
 	QuietPolicyChecks                = "quiet-policy-checks"
-	LockingDBType                    = "locking-db-type"
 	KubernetesNamespaceFlag          = "kubernetes-namespace"
 	KubernetesIdentityFlag           = "kubernetes-identity"
 	ClusterAddressFlag               = "cluster-address"
@@ -140,14 +139,6 @@ const (
 	AllowDraftPRs                    = "allow-draft-prs"
 	EnableExternalStoresFlag         = "enable-external-stores"
 	PortFlag                         = "port"
-	RedisDB                          = "redis-db"
-	RedisHost                        = "redis-host"
-	RedisPassword                    = "redis-password"
-	RedisPort                        = "redis-port"
-	RedisTLSEnabled                  = "redis-tls-enabled"
-	RedisInsecureSkipVerify          = "redis-insecure-skip-verify"
-	RedisUsername                    = "redis-username"
-	RedisClusterAddresses            = "redis-cluster-addresses"
 	RepoConfigFlag                   = "repo-config"
 	RepoConfigJSONFlag               = "repo-config-json"
 	RepoAllowlistFlag                = "repo-allowlist"
@@ -201,7 +192,6 @@ const (
 	DefaultGiteaBaseURL                 = "https://gitea.com"
 	DefaultGiteaPageSize                = 30
 	DefaultGitlabHostname               = "gitlab.com"
-	DefaultLockingDBType                = "boltdb"
 	DefaultClusterPort                  = 4142
 	DefaultClusterPlanHolderWait        = 180
 	DefaultPlanRiskFailureTier          = "high"
@@ -215,10 +205,6 @@ const (
 	DefaultParallelPoolSize             = 15
 	DefaultStatsNamespace               = "atlantis"
 	DefaultPort                         = 4141
-	DefaultRedisDB                      = 0
-	DefaultRedisPort                    = 6379
-	DefaultRedisTLSEnabled              = false
-	DefaultRedisInsecureSkipVerify      = false
 	DefaultTFDistribution               = TFDistributionTerraform
 	DefaultTFDownloadURL                = "https://releases.hashicorp.com"
 	DefaultTFDownload                   = true
@@ -439,22 +425,18 @@ var stringFlags = map[string]stringFlag{
 	APISecretFlag: {
 		description: "Secret used to validate requests made to the /api/* endpoints",
 	},
-	LockingDBType: {
-		description: "The locking database type to use for storing plan and apply locks: boltdb, redis, or kubernetes." +
-			" kubernetes stores state in Leases and PullStatus resources and enables multi-replica operation.",
-		defaultValue: DefaultLockingDBType,
-	},
 	KubernetesNamespaceFlag: {
-		description: "Namespace for Atlantis state when --" + LockingDBType + "=kubernetes. Defaults to $POD_NAMESPACE or the service account namespace.",
+		description: "Namespace for Atlantis state. Defaults to $POD_NAMESPACE or the service account namespace.",
 	},
 	KubernetesIdentityFlag: {
-		description: "Unique identity of this replica when --" + LockingDBType + "=kubernetes. Defaults to $POD_NAME or the hostname.",
+		description: "Unique identity of this replica. Defaults to $POD_NAME or the hostname.",
 	},
 	ClusterAddressFlag: {
 		description: "URL other replicas use to reach this replica's cluster port. Defaults to http://$POD_IP:<cluster-port>.",
 	},
 	ClusterTokenFlag: {
-		description: "Shared secret authenticating calls between replicas. Required when --" + LockingDBType + "=kubernetes." +
+		description: "Shared secret authenticating calls between replicas; every replica must use the same token." +
+			" If unset, a random token is generated, which only suits a single replica." +
 			" Should be specified via the ATLANTIS_CLUSTER_TOKEN environment variable.",
 	},
 	PlanRiskFailureTierFlag: {
@@ -496,19 +478,6 @@ var stringFlags = map[string]stringFlag{
 		description: "Path to directory to persist job output in, so job logs survive a restart. With multiple replicas, point every replica at the same shared or network volume (e.g. NFS, EFS, or an S3 bucket mounted with append support)." +
 			" If unset, defaults to the '" + logstore.DirName + "' subdirectory of --" + DataDirFlag + ".",
 		defaultValue: "",
-	},
-	RedisHost: {
-		description: "The Redis Hostname for when using a Locking DB type of 'redis'.",
-	},
-	RedisPassword: {
-		description: "The Redis Password for when using a Locking DB type of 'redis'.",
-	},
-	RedisUsername: {
-		description: "The Redis Username for when using a Locking DB type of 'redis'.",
-	},
-	RedisClusterAddresses: {
-		description: "Comma-delimited list of Redis cluster node addresses in the format 'host:port'. " +
-			"When set, Atlantis uses Redis Cluster mode instead of single-node mode.",
 	},
 	RepoConfigFlag: {
 		description: "Path to a repo config file, used to customize how Atlantis runs on each repo. See runatlantis.io/docs for more details.",
@@ -695,14 +664,6 @@ var boolFlags = map[string]boolFlag{
 		description:  "Exclude policy check comments from pull requests unless there's an actual error from conftest. This also excludes warnings.",
 		defaultValue: false,
 	},
-	RedisTLSEnabled: {
-		description:  "Enable TLS on the connection to Redis with a min TLS version of 1.2",
-		defaultValue: DefaultRedisTLSEnabled,
-	},
-	RedisInsecureSkipVerify: {
-		description:  "Controls whether the Redis client verifies the Redis server's certificate chain and host name. If true, accepts any certificate presented by the server and any host name in that certificate.",
-		defaultValue: DefaultRedisInsecureSkipVerify,
-	},
 	SilenceNoProjectsFlag: {
 		description:  "Silences Atlants from responding to PRs when it finds no projects.",
 		defaultValue: false,
@@ -775,12 +736,12 @@ var boolFlags = map[string]boolFlag{
 }
 var intFlags = map[string]intFlag{
 	ClusterPlanHolderWaitFlag: {
-		description: "When --" + LockingDBType + "=kubernetes and no external plan store is configured, applies run on the replica that made the plan." +
+		description: "When no external plan store is configured, applies run on the replica that made the plan." +
 			" If that replica is restarting, wait this many seconds for it to return before running the apply elsewhere. A negative value disables waiting.",
 		defaultValue: DefaultClusterPlanHolderWait,
 	},
 	ClusterPortFlag: {
-		description:  "Port of the internal listener used for traffic between replicas when --" + LockingDBType + "=kubernetes. Do not expose it outside the cluster.",
+		description:  "Port of the internal listener used for traffic between replicas. Do not expose it outside the cluster.",
 		defaultValue: DefaultClusterPort,
 	},
 	CheckoutDepthFlag: {
@@ -804,14 +765,6 @@ var intFlags = map[string]intFlag{
 	PortFlag: {
 		description:  "Port to bind to.",
 		defaultValue: DefaultPort,
-	},
-	RedisDB: {
-		description:  "The Redis Database to use when using a Locking DB type of 'redis'.",
-		defaultValue: DefaultRedisDB,
-	},
-	RedisPort: {
-		description:  "The Redis Port for when using a Locking DB type of 'redis'.",
-		defaultValue: DefaultRedisPort,
 	},
 }
 
@@ -985,7 +938,8 @@ func (s *ServerCmd) preRun() error {
 // sanitizeKubernetesServiceLinks detects Kubernetes service link environment
 // variables that collide with Atlantis's ATLANTIS_ env prefix and resets them
 // to their defaults. Kubernetes auto-creates env vars like
-// ATLANTIS_REDIS_PORT=tcp://10.x.x.x:6379 for services in the same namespace,
+// ATLANTIS_CLUSTER_PORT=tcp://10.x.x.x:4142 for a Service named
+// "atlantis-cluster" in the same namespace,
 // which viper picks up and fails to parse as integers.
 func (s *ServerCmd) sanitizeKubernetesServiceLinks() {
 	for name, f := range intFlags {
@@ -1112,9 +1066,6 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	if c.TypeSafeModel == "" {
 		c.TypeSafeModel = DefaultTypeSafeModel
 	}
-	if c.LockingDBType == "" {
-		c.LockingDBType = DefaultLockingDBType
-	}
 	if c.Language == "" {
 		c.Language = DefaultLanguage
 	}
@@ -1135,12 +1086,6 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	}
 	if c.Port == 0 {
 		c.Port = DefaultPort
-	}
-	if c.RedisDB == 0 {
-		c.RedisDB = DefaultRedisDB
-	}
-	if c.RedisPort == 0 {
-		c.RedisPort = DefaultRedisPort
 	}
 	if c.TFDistribution != "" && c.DefaultTFDistribution == "" {
 		c.DefaultTFDistribution = c.TFDistribution
@@ -1286,17 +1231,8 @@ func (s *ServerCmd) validate(userConfig server.UserConfig) error {
 		return fmt.Errorf("if setting --%s, must set --%s", TFEHostnameFlag, TFETokenFlag)
 	}
 
-	switch userConfig.LockingDBType {
-	case "boltdb", "redis":
-	case "kubernetes":
-		if userConfig.ClusterToken == "" {
-			return fmt.Errorf("--%s must be set when --%s=kubernetes", ClusterTokenFlag, LockingDBType)
-		}
-		if userConfig.ClusterPort == userConfig.Port {
-			return fmt.Errorf("--%s must differ from --%s", ClusterPortFlag, PortFlag)
-		}
-	default:
-		return fmt.Errorf("invalid --%s %q: must be one of boltdb, redis, kubernetes", LockingDBType, userConfig.LockingDBType)
+	if userConfig.ClusterPort == userConfig.Port {
+		return fmt.Errorf("--%s must differ from --%s", ClusterPortFlag, PortFlag)
 	}
 
 	validTiers := map[string]bool{"low": true, "medium": true, "high": true, "critical": true}
@@ -1308,18 +1244,6 @@ func (s *ServerCmd) validate(userConfig server.UserConfig) error {
 	}
 	if userConfig.PlanRiskEnabled && userConfig.TypeSafeAPIKey == "" {
 		return fmt.Errorf("--%s must be set when --%s is enabled", TypeSafeAPIKeyFlag, PlanRiskEnabledFlag)
-	}
-
-	if userConfig.RedisClusterAddresses != "" {
-		if userConfig.RedisHost != "" {
-			return fmt.Errorf("--%s cannot be combined with --%s", RedisClusterAddresses, RedisHost)
-		}
-		if userConfig.RedisPort != DefaultRedisPort {
-			return fmt.Errorf("--%s cannot be combined with --%s", RedisClusterAddresses, RedisPort)
-		}
-		if userConfig.RedisDB != DefaultRedisDB {
-			return fmt.Errorf("--%s is not supported in cluster mode (Redis Cluster ignores the DB parameter)", RedisDB)
-		}
 	}
 
 	_, patternErr := patternmatcher.New(strings.Split(userConfig.AutoplanFileList, ","))

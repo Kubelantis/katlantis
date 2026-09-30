@@ -312,9 +312,9 @@ type Project struct {
 	// Path to project root in the repo.
 	// If "." then project is at root.
 	// Never ends in "/".
-	// todo: rename to RepoRelDir to match rest of project once we can separate
-	// out how this is saved in boltdb vs. its usage everywhere else so we don't
-	// break existing dbs.
+	// todo: rename to RepoRelDir to match rest of project. The field name is
+	// part of the lock JSON stored in project-lock Leases, so renaming it
+	// needs a migration of existing locks.
 	Path string
 }
 

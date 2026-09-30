@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -36,7 +38,7 @@ import (
 )
 
 // kubeRuntime holds everything Atlantis needs to run as one of several
-// replicas on Kubernetes. It is nil unless --locking-db-type=kubernetes.
+// replicas on Kubernetes. NewServer always creates it; it is nil only in unit tests that build a Server directly.
 type kubeRuntime struct {
 	client     client.Client
 	restConfig *rest.Config
@@ -66,7 +68,10 @@ type kubeRuntime struct {
 	janitor *janitor.Janitor
 }
 
-func newKubeRuntime(userConfig UserConfig, logger logging.SimpleLogging, scope tally.Scope) (*kubeRuntime, error) {
+// newKubeRuntime connects to the Kubernetes API. c, if non-nil, is used
+// instead of the in-cluster or KUBECONFIG client (tests pass a fake); leader
+// election then stays off because it needs a REST config.
+func newKubeRuntime(userConfig UserConfig, c client.Client, logger logging.SimpleLogging, scope tally.Scope) (*kubeRuntime, error) {
 	ns, err := kube.ResolveNamespace(userConfig.KubernetesNamespace)
 	if err != nil {
 		return nil, err
@@ -75,9 +80,11 @@ func newKubeRuntime(userConfig UserConfig, logger logging.SimpleLogging, scope t
 	if err != nil {
 		return nil, fmt.Errorf("resolving replica identity: %w", err)
 	}
-	c, restCfg, err := kube.NewClient(50, 100)
-	if err != nil {
-		return nil, err
+	var restCfg *rest.Config
+	if c == nil {
+		if c, restCfg, err = kube.NewClient(50, 100); err != nil {
+			return nil, err
+		}
 	}
 	address := userConfig.ClusterAddress
 	if address == "" {
@@ -89,13 +96,20 @@ func newKubeRuntime(userConfig UserConfig, logger logging.SimpleLogging, scope t
 	}
 
 	logger = logger.With("replica", identity)
+	token := userConfig.ClusterToken
+	if token == "" {
+		// Safe for one replica. With several, forwards between replicas with
+		// different tokens are rejected and commands run where they arrive.
+		token = randomToken()
+		logger.Warn("--cluster-token is not set; generated a random one. Set the same ATLANTIS_CLUSTER_TOKEN on every replica so they can forward work to each other")
+	}
 	scope = scope.SubScope("cluster")
 	k := &kubeRuntime{
 		client: c, restConfig: restCfg, namespace: ns, identity: identity,
-		token: userConfig.ClusterToken, port: userConfig.ClusterPort,
+		token: token, port: userConfig.ClusterPort,
 		logger: logger, scope: scope,
 		rpcClient: &clusterrpc.Client{
-			Token:      userConfig.ClusterToken,
+			Token:      token,
 			HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
 		},
 	}
@@ -257,11 +271,13 @@ func (k *kubeRuntime) start(s *Server, local events.ContextCommandRunner, localC
 	if k.janitor != nil {
 		k.wg.Go(func() { k.janitor.Run(ctx) })
 	}
-	k.wg.Go(func() {
-		if err := k.leader.Run(ctx); err != nil {
-			k.logger.Err("leader election: %s", err)
-		}
-	})
+	if k.restConfig != nil {
+		k.wg.Go(func() {
+			if err := k.leader.Run(ctx); err != nil {
+				k.logger.Err("leader election: %s", err)
+			}
+		})
+	}
 	k.started.Store(true)
 	return nil
 }
@@ -298,4 +314,12 @@ func (k *kubeRuntime) stop() {
 	defer cancel()
 	_ = k.srv.Shutdown(ctx)
 	k.wg.Wait()
+}
+
+func randomToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand never fails on supported platforms
+	}
+	return hex.EncodeToString(b)
 }

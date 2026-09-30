@@ -11,17 +11,7 @@ services:
       - atlantis.env
     depends_on:
       - atlantis
-  redis:
-    image: redis:8.6-alpine@sha256:75934ddb37bfaebe3b4082ba673cac39f66495244134f33dd0a502ce03cdcd36
-    restart: always
-    ports:
-      - 6379:6379
-    command: redis-server --save 20 1 --loglevel warning --requirepass test123
-    volumes:
-      - redis:/data
   atlantis:
-    depends_on:
-      - redis
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -30,10 +20,15 @@ services:
     volumes:
       - ${HOME}/.ssh:/.ssh:ro
       - ${PWD}:/atlantis/src:ro
+      # Atlantis keeps locks and pull status in a Kubernetes API. The
+      # kubeconfig's server must be reachable from inside this container
+      # (for kind, use the cluster's container address, not 127.0.0.1).
+      - ${HOME}/.kube/config:/kube/config:ro
+    environment:
+      KUBECONFIG: /kube/config
+      ATLANTIS_KUBERNETES_NAMESPACE: default
+      ATLANTIS_KUBERNETES_IDENTITY: atlantis-dev
+      ATLANTIS_CLUSTER_ADDRESS: http://atlantis:4142
     # Contains the flags that atlantis uses in env var form
     env_file:
       - atlantis.env
-
-volumes:
-  redis:
-    driver: local

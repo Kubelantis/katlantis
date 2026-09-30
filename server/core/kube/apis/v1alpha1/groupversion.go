@@ -1,5 +1,5 @@
 // Package v1alpha1 contains the Kubernetes API types Atlantis uses to store
-// shared state when running with --locking-db-type=kubernetes.
+// shared state: locks as Leases and pull status as PullStatus resources.
 // +kubebuilder:object:generate=true
 // +groupName=atlantis.runatlantis.io
 package v1alpha1

@@ -34,14 +34,12 @@ import (
 	prometheus "github.com/uber-go/tally/v4/prometheus"
 	"github.com/urfave/negroni/v3"
 
-	"github.com/runatlantis/atlantis/server/core/boltdb"
 	cfg "github.com/runatlantis/atlantis/server/core/config"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/db"
 	"github.com/runatlantis/atlantis/server/core/drift"
 	"github.com/runatlantis/atlantis/server/core/logstore"
 	"github.com/runatlantis/atlantis/server/core/planrisk"
-	"github.com/runatlantis/atlantis/server/core/redis"
 	"github.com/runatlantis/atlantis/server/core/terraform/tfclient"
 	"github.com/runatlantis/atlantis/server/jobs"
 	"github.com/runatlantis/atlantis/server/metrics"
@@ -74,6 +72,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -97,7 +96,8 @@ const (
 
 // Server runs the Atlantis web server.
 type Server struct {
-	// kube is set when running with --locking-db-type=kubernetes.
+	// kube is always set by NewServer; it is nil only in unit tests that build
+	// a Server directly.
 	kube *kubeRuntime
 	// commandRunner is the local runner, used by the cluster listener.
 	commandRunner events.ContextCommandRunner
@@ -147,6 +147,9 @@ type Server struct {
 
 // Config holds config for server that isn't passed in by the user.
 type Config struct {
+	// KubeClient replaces the in-cluster (or KUBECONFIG) Kubernetes client;
+	// tests set it to a fake. Without a REST config there is no leader election.
+	KubeClient                client.Client
 	AllowForkPRsFlag          string
 	AtlantisURLFlag           string
 	AtlantisVersion           string
@@ -243,15 +246,13 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		return nil, fmt.Errorf("instantiating metrics scope: %w", err)
 	}
 
-	var kubeRT *kubeRuntime
-	if userConfig.LockingDBType == "kubernetes" {
-		if kubeRT, err = newKubeRuntime(userConfig, logger, statsScope); err != nil {
-			return nil, err
-		}
+	kubeRT, err := newKubeRuntime(userConfig, config.KubeClient, logger, statsScope)
+	if err != nil {
+		return nil, err
 	}
-	tracingCfg := tracing.Config{Enabled: userConfig.TracingEnabled, ServiceName: "atlantis", Version: config.AtlantisVersion}
-	if kubeRT != nil {
-		tracingCfg.Identity, tracingCfg.Namespace = kubeRT.identity, kubeRT.namespace
+	tracingCfg := tracing.Config{
+		Enabled: userConfig.TracingEnabled, ServiceName: "atlantis", Version: config.AtlantisVersion,
+		Identity: kubeRT.identity, Namespace: kubeRT.namespace,
 	}
 	tracingShutdown, err := tracing.Setup(context.Background(), tracingCfg)
 	if err != nil {
@@ -536,49 +537,12 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	var applyLockingClient locking.ApplyLocker
 	var database db.Database
 
-	switch dbtype := userConfig.LockingDBType; dbtype {
-	case "redis":
-		var clusterAddrs []string
-		if userConfig.RedisClusterAddresses != "" {
-			for addr := range strings.SplitSeq(userConfig.RedisClusterAddresses, ",") {
-				trimmed := strings.TrimSpace(addr)
-				if trimmed == "" {
-					continue
-				}
-				clusterAddrs = append(clusterAddrs, trimmed)
-			}
-		}
-		switch {
-		case len(clusterAddrs) > 0:
-			logger.Info("Utilizing Redis DB in cluster mode, addresses: %s", strings.Join(clusterAddrs, ", "))
-		default:
-			logger.Info("Utilizing Redis DB in single-node mode, host: %s, port: %d", userConfig.RedisHost, userConfig.RedisPort)
-		}
-		database, err = redis.NewWithConfig(redis.Config{
-			Hostname:           userConfig.RedisHost,
-			Port:               userConfig.RedisPort,
-			Password:           userConfig.RedisPassword,
-			Username:           userConfig.RedisUsername,
-			TLSEnabled:         userConfig.RedisTLSEnabled,
-			InsecureSkipVerify: userConfig.RedisInsecureSkipVerify,
-			DB:                 userConfig.RedisDB,
-			ClusterAddresses:   clusterAddrs,
-		})
-		if err != nil {
-			return nil, err
-		}
-	case "kubernetes":
-		logger.Info("Utilizing Kubernetes Leases and PullStatus resources in namespace %s", kubeRT.namespace)
-		database, err = kubeRT.database()
-		if err != nil {
-			return nil, err
-		}
-	case "boltdb":
-		logger.Info("Utilizing BoltDB")
-		database, err = boltdb.New(userConfig.DataDir)
-		if err != nil {
-			return nil, err
-		}
+	// Locks and pull status live in the Kubernetes API (Leases and PullStatus
+	// resources); it is the only backend.
+	logger.Info("Utilizing Kubernetes Leases and PullStatus resources in namespace %s", kubeRT.namespace)
+	database, err = kubeRT.database()
+	if err != nil {
+		return nil, err
 	}
 
 	noOpLocker := locking.NewNoOpLocker()
@@ -592,14 +556,11 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 
 	applyLockingClient = locking.NewApplyClient(database, disableApply, disableGlobalApplyLock)
 	cancellationTracker := events.NewCancellationTracker()
-	var workingDirLocker events.WorkingDirLocker = events.NewDefaultWorkingDirLocker()
-	if kubeRT != nil {
-		workingDirLocker = kubeRT.workingDirLocker(workingDirLocker, func(repoFullName string, pullNum int) {
-			// Stop queued projects and execution groups; the step-level
-			// fencing check stops the current project's remaining steps.
-			cancellationTracker.Cancel(models.PullRequest{Num: pullNum, BaseRepo: models.Repo{FullName: repoFullName}})
-		})
-	}
+	workingDirLocker := kubeRT.workingDirLocker(events.NewDefaultWorkingDirLocker(), func(repoFullName string, pullNum int) {
+		// Stop queued projects and execution groups; the step-level fencing
+		// check stops the current project's remaining steps.
+		cancellationTracker.Cancel(models.PullRequest{Num: pullNum, BaseRepo: models.Repo{FullName: repoFullName}})
+	})
 
 	var workingDir events.WorkingDir = &events.FileWorkspace{
 		DataDir:           userConfig.DataDir,
@@ -1158,30 +1119,26 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		apiController.DriftWebhookSender = driftWebhookSender
 	}
 
-	var eventsCommandRunner events.CommandRunner = commandRunner
-	var eventsPullCleaner events.PullCleaner = pullClosedExecutor
-	if kubeRT != nil {
-		router := kubeRT.wire(kubeDeps{
-			CommandRunner:       commandRunner,
-			PullCleaner:         pullClosedExecutor,
-			PullClosedExecutor:  basePullClosedExecutor,
-			VCSClient:           vcsClient,
-			Database:            database,
-			WorkingDir:          workingDir,
-			WorkingDirLocker:    workingDirLocker,
-			JobOutput:           projectCmdOutputHandler,
-			CancellationTracker: cancellationTracker,
-			LocalLogs:           localLogStore,
-			DataDir:             userConfig.DataDir,
-			JobLogDir:           jobLogDir(userConfig),
-			SharedPlans:         externalPlanStore(userConfig, globalCfg),
-			PlanHolderWait:      time.Duration(userConfig.ClusterPlanHolderWaitSeconds) * time.Second,
-		})
-		eventsCommandRunner, eventsPullCleaner = router, router
-	}
+	// Commands and pull cleanup go to the replica that owns the pull.
+	clusterRouter := kubeRT.wire(kubeDeps{
+		CommandRunner:       commandRunner,
+		PullCleaner:         pullClosedExecutor,
+		PullClosedExecutor:  basePullClosedExecutor,
+		VCSClient:           vcsClient,
+		Database:            database,
+		WorkingDir:          workingDir,
+		WorkingDirLocker:    workingDirLocker,
+		JobOutput:           projectCmdOutputHandler,
+		CancellationTracker: cancellationTracker,
+		LocalLogs:           localLogStore,
+		DataDir:             userConfig.DataDir,
+		JobLogDir:           jobLogDir(userConfig),
+		SharedPlans:         externalPlanStore(userConfig, globalCfg),
+		PlanHolderWait:      time.Duration(userConfig.ClusterPlanHolderWaitSeconds) * time.Second,
+	})
 	eventsController := &events_controllers.VCSEventsController{
-		CommandRunner:                   eventsCommandRunner,
-		PullCleaner:                     eventsPullCleaner,
+		CommandRunner:                   clusterRouter,
+		PullCleaner:                     clusterRouter,
 		Parser:                          eventParser,
 		CommentParser:                   commentParser,
 		Logger:                          logger,
@@ -1553,9 +1510,10 @@ func (s *Server) Healthz(w http.ResponseWriter, _ *http.Request) {
 	w.Write(healthzData) // nolint: errcheck
 }
 
-// Readyz checks whether the server is ready to handle requests by verifying
-// connectivity to external dependencies (e.g. Redis). Returns 503 if any
-// dependency is unreachable. Suitable for K8s readiness probes.
+// Readyz reports whether this replica should receive traffic: 503 while it
+// starts or drains, 200 otherwise. It does not probe the shared Kubernetes
+// API (see kubeRuntime.ready). A Server built without the Kubernetes runtime,
+// as in some unit tests, falls back to pinging the database.
 func (s *Server) Readyz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.kube != nil {

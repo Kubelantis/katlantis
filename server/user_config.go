@@ -89,7 +89,6 @@ type UserConfig struct {
 	IncludeGitUntrackedFiles        bool   `mapstructure:"include-git-untracked-files"`
 	APISecret                       string `mapstructure:"api-secret"`
 	HidePrevPlanComments            bool   `mapstructure:"hide-prev-plan-comments"`
-	LockingDBType                   string `mapstructure:"locking-db-type"`
 	KubernetesNamespace             string `mapstructure:"kubernetes-namespace"`
 	KubernetesIdentity              string `mapstructure:"kubernetes-identity"`
 	ClusterAddress                  string `mapstructure:"cluster-address"`
@@ -118,14 +117,6 @@ type UserConfig struct {
 	EnableExternalStores            bool   `mapstructure:"enable-external-stores"`
 	Port                            int    `mapstructure:"port"`
 	QuietPolicyChecks               bool   `mapstructure:"quiet-policy-checks"`
-	RedisDB                         int    `mapstructure:"redis-db"`
-	RedisHost                       string `mapstructure:"redis-host"`
-	RedisPassword                   string `mapstructure:"redis-password"`
-	RedisPort                       int    `mapstructure:"redis-port"`
-	RedisTLSEnabled                 bool   `mapstructure:"redis-tls-enabled"`
-	RedisInsecureSkipVerify         bool   `mapstructure:"redis-insecure-skip-verify"`
-	RedisUsername                   string `mapstructure:"redis-username"`
-	RedisClusterAddresses           string `mapstructure:"redis-cluster-addresses"`
 	RepoConfig                      string `mapstructure:"repo-config"`
 	RepoConfigJSON                  string `mapstructure:"repo-config-json"`
 	RepoAllowlist                   string `mapstructure:"repo-allowlist"`
