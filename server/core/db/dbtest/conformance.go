@@ -299,4 +299,14 @@ func Run(t *testing.T, newDB Factory) {
 	t.Run("ping", func(t *testing.T) {
 		Ok(t, newDB(t).Ping())
 	})
+
+	t.Run("operations fail after close", func(t *testing.T) {
+		d := newDB(t)
+		Ok(t, d.Close())
+		_, err := d.UpdatePullWithResults(newPull(1, "sha1"), []command.ProjectResult{planResult(".", "default", "", false)})
+		Assert(t, err != nil, "write after close must fail")
+		_, _, err = d.TryLock(newLock(1, project, workspace))
+		Assert(t, err != nil, "lock after close must fail")
+		Assert(t, d.Ping() != nil, "ping after close must fail")
+	})
 }

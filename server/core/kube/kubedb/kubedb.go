@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -60,7 +61,8 @@ type Config struct {
 
 // KubeDB is a db.Database backed by the Kubernetes API.
 type KubeDB struct {
-	c        client.Client
+	c        apiClient
+	closed   atomic.Bool
 	ns       string
 	identity string
 	timeout  time.Duration
@@ -104,7 +106,7 @@ func (k *KubeDB) TryLock(newLock models.ProjectLock) (bool, models.ProjectLock, 
 	// A lock can be released between our failed create and the follow-up get,
 	// so retry a few times before reporting an error.
 	for range 3 {
-		err = k.c.Create(ctx, lease)
+		err = k.client().Create(ctx, lease)
 		if err == nil {
 			return true, newLock, nil
 		}
@@ -149,7 +151,7 @@ func (k *KubeDB) projectLockLease(name, key string, l models.ProjectLock) (*coor
 // getLockLease returns the lock stored in the named lease, or nil.
 func (k *KubeDB) getLockLease(ctx context.Context, name string) (*models.ProjectLock, error) {
 	var lease coordinationv1.Lease
-	err := k.c.Get(ctx, client.ObjectKey{Namespace: k.ns, Name: name}, &lease)
+	err := k.client().Get(ctx, client.ObjectKey{Namespace: k.ns, Name: name}, &lease)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -174,7 +176,7 @@ func decodeLock(lease *coordinationv1.Lease) (models.ProjectLock, error) {
 // deleteExact deletes the lease only if it is still the version we read.
 func (k *KubeDB) deleteExact(ctx context.Context, lease *coordinationv1.Lease) error {
 	uid, rv := lease.UID, lease.ResourceVersion
-	err := k.c.Delete(ctx, lease, client.Preconditions{UID: &uid, ResourceVersion: &rv})
+	err := k.client().Delete(ctx, lease, client.Preconditions{UID: &uid, ResourceVersion: &rv})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -189,7 +191,7 @@ func (k *KubeDB) Unlock(p models.Project, workspace string) (*models.ProjectLock
 	var found *models.ProjectLock
 	err := retry.RetryOnConflict(conflictBackoff, func() error {
 		var lease coordinationv1.Lease
-		err := k.c.Get(ctx, client.ObjectKey{Namespace: k.ns, Name: name}, &lease)
+		err := k.client().Get(ctx, client.ObjectKey{Namespace: k.ns, Name: name}, &lease)
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -220,7 +222,7 @@ func (k *KubeDB) UnlockIfOwnedByPull(p models.Project, workspace string, pullNum
 	var found *models.ProjectLock
 	err := retry.RetryOnConflict(conflictBackoff, func() error {
 		var lease coordinationv1.Lease
-		err := k.c.Get(ctx, client.ObjectKey{Namespace: k.ns, Name: name}, &lease)
+		err := k.client().Get(ctx, client.ObjectKey{Namespace: k.ns, Name: name}, &lease)
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -249,7 +251,7 @@ func (k *KubeDB) UnlockIfOwnedByPull(p models.Project, workspace string, pullNum
 func (k *KubeDB) listLocks(ctx context.Context, extra map[string]string) ([]coordinationv1.Lease, error) {
 	var list coordinationv1.LeaseList
 	sel := client.MatchingLabels(kube.Labels(kube.TypeProjectLock, extra))
-	if err := k.c.List(ctx, &list, client.InNamespace(k.ns), sel); err != nil {
+	if err := k.client().List(ctx, &list, client.InNamespace(k.ns), sel); err != nil {
 		return nil, fmt.Errorf("listing lock leases: %w", err)
 	}
 	return list.Items, nil
@@ -286,8 +288,8 @@ func (k *KubeDB) GetLock(p models.Project, workspace string) (*models.ProjectLoc
 	return l, err
 }
 
-// UnlockByPull implements db.Database. Unlike the BoltDB prefix scan it
-// matches the repo name exactly, so "org/repo" does not release "org/repo2".
+// UnlockByPull implements db.Database. It matches the repo name exactly, so
+// "org/repo" does not release "org/repo2".
 func (k *KubeDB) UnlockByPull(repoFullName string, pullNum int) ([]models.ProjectLock, error) {
 	ctx, cancel := k.ctx()
 	defer cancel()
@@ -345,7 +347,7 @@ func (k *KubeDB) LockCommand(cmdName command.Name, lockTime time.Time) (*command
 		},
 		Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder, AcquireTime: &acquired},
 	}
-	if err := k.c.Create(ctx, lease); err != nil {
+	if err := k.client().Create(ctx, lease); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return nil, errors.New("db transaction failed: lock already exists")
 		}
@@ -359,7 +361,7 @@ func (k *KubeDB) UnlockCommand(cmdName command.Name) error {
 	ctx, cancel := k.ctx()
 	defer cancel()
 	lease := &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: k.commandLockName(cmdName), Namespace: k.ns}}
-	err := k.c.Delete(ctx, lease)
+	err := k.client().Delete(ctx, lease)
 	if apierrors.IsNotFound(err) {
 		return errors.New("db transaction failed: no lock exists")
 	}
@@ -374,7 +376,7 @@ func (k *KubeDB) CheckCommandLock(cmdName command.Name) (*command.Lock, error) {
 	ctx, cancel := k.ctx()
 	defer cancel()
 	var lease coordinationv1.Lease
-	err := k.c.Get(ctx, client.ObjectKey{Namespace: k.ns, Name: k.commandLockName(cmdName)}, &lease)
+	err := k.client().Get(ctx, client.ObjectKey{Namespace: k.ns, Name: k.commandLockName(cmdName)}, &lease)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -398,7 +400,7 @@ func (k *KubeDB) pullObjectKey(pull models.PullRequest) client.ObjectKey {
 // getPull returns the stored object, or nil if there is none.
 func (k *KubeDB) getPull(ctx context.Context, pull models.PullRequest) (*v1alpha1.PullStatus, error) {
 	var obj v1alpha1.PullStatus
-	err := k.c.Get(ctx, k.pullObjectKey(pull), &obj)
+	err := k.client().Get(ctx, k.pullObjectKey(pull), &obj)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -420,7 +422,7 @@ func (k *KubeDB) writePull(ctx context.Context, obj *v1alpha1.PullStatus, pull m
 			spec.PlannedBy = obj.Spec.PlannedBy
 		}
 		obj.Spec = spec
-		return k.c.Update(ctx, obj)
+		return k.client().Update(ctx, obj)
 	}
 	key := k.pullObjectKey(pull)
 	obj = &v1alpha1.PullStatus{
@@ -437,7 +439,7 @@ func (k *KubeDB) writePull(ctx context.Context, obj *v1alpha1.PullStatus, pull m
 		},
 		Spec: spec,
 	}
-	err := k.c.Create(ctx, obj)
+	err := k.client().Create(ctx, obj)
 	if apierrors.IsAlreadyExists(err) {
 		return apierrors.NewConflict(v1alpha1.GroupVersion.WithResource("pullstatuses").GroupResource(), key.Name, err)
 	}
@@ -456,7 +458,7 @@ func (k *KubeDB) UpdatePullWithResults(pull models.PullRequest, newResults []com
 		}
 		var curr *models.PullStatus
 		if obj != nil {
-			// Match BoltDB: an unreadable status is discarded, not fatal.
+			// An unreadable status (e.g. from an older schema) is discarded, not fatal.
 			if s, err := specToPullStatus(obj.Spec); err == nil {
 				curr = &s
 			}
@@ -500,7 +502,7 @@ func (k *KubeDB) DeletePullStatus(pull models.PullRequest) error {
 	defer cancel()
 	key := k.pullObjectKey(pull)
 	obj := &v1alpha1.PullStatus{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
-	if err := k.c.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+	if err := k.client().Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("DB transaction failed: %w", err)
 	}
 	return nil
@@ -539,7 +541,7 @@ func (k *KubeDB) PullStatusExists(repoFullName string, pullNum int) (bool, error
 	ctx, cancel := k.ctx()
 	defer cancel()
 	var list v1alpha1.PullStatusList
-	err := k.c.List(ctx, &list, client.InNamespace(k.ns), client.MatchingLabels{
+	err := k.client().List(ctx, &list, client.InNamespace(k.ns), client.MatchingLabels{
 		kube.LabelRepo: kube.Hash(repoFullName),
 		kube.LabelPull: strconv.Itoa(pullNum),
 	})
@@ -573,8 +575,49 @@ func (k *KubeDB) Ping() error {
 	ctx, cancel := k.ctx()
 	defer cancel()
 	var list coordinationv1.LeaseList
-	return k.c.List(ctx, &list, client.InNamespace(k.ns), client.Limit(1))
+	return k.client().List(ctx, &list, client.InNamespace(k.ns), client.Limit(1))
 }
 
-// Close implements db.Database.
-func (k *KubeDB) Close() error { return nil }
+// Close implements db.Database. Later operations fail with ErrClosed, as
+// they would on a closed database connection.
+func (k *KubeDB) Close() error {
+	k.closed.Store(true)
+	return nil
+}
+
+// ErrClosed is returned by operations on a closed KubeDB.
+var ErrClosed = errors.New("kubedb: database is closed")
+
+// apiClient is the part of the Kubernetes client KubeDB uses.
+type apiClient interface {
+	client.Reader
+	Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error
+	Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error
+	Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error
+}
+
+func (k *KubeDB) client() apiClient {
+	if k.closed.Load() {
+		return closedClient{}
+	}
+	return k.c
+}
+
+// closedClient fails every call with ErrClosed.
+type closedClient struct{}
+
+func (closedClient) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return ErrClosed
+}
+func (closedClient) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return ErrClosed
+}
+func (closedClient) Create(context.Context, client.Object, ...client.CreateOption) error {
+	return ErrClosed
+}
+func (closedClient) Update(context.Context, client.Object, ...client.UpdateOption) error {
+	return ErrClosed
+}
+func (closedClient) Delete(context.Context, client.Object, ...client.DeleteOption) error {
+	return ErrClosed
+}
