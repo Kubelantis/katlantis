@@ -89,6 +89,7 @@ node loss and rolling updates, and need no external database.
 
 ## Follow-ups
 
-- M5: remove the BoltDB and Redis backends (see `docs/kubernetes-native.md`).
+- M5, done: the BoltDB and Redis backends and `--locking-db-type` were removed;
+  Kubernetes is the only storage backend.
 - Store drift results in a CRD.
 - Aggregate the job list across replicas.

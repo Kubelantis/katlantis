@@ -14,11 +14,9 @@ El locking de Terraform puede usarse junto con el locking de Atlantis, ya que At
 
 R: El servidor Atlantis puede ejecutarse fácilmente bajo la supervisión de un sistema init como `upstart` o `systemd` para asegurar que `atlantis server` siempre esté en ejecución.
 
-Atlantis, de forma predeterminada, almacena todo el locking y los planes de Terraform localmente en disco en el directorio `--data-dir` (por defecto `~/.atlantis`). Si se ejecutan múltiples hosts de Atlantis utilizando un backend redis compartido, entonces es importante que `data-dir` use un sistema de archivos compartido entre hosts.
+Atlantis guarda los locks y el estado de los pull requests en la API de Kubernetes (Leases y recursos `PullStatus`), así que pueden ejecutarse varias réplicas a la vez. Cada pull request lo gestiona una réplica; los webhooks que llegan a otra réplica se reenvían a ella. Consulta [Kubernetes-native Atlantis](https://github.com/App-First-Step/katlantis/blob/master/docs/kubernetes-native.md) y el chart de Helm.
 
-Sin embargo, si perdieras los datos, todo lo que necesitarías hacer es ejecutar `atlantis plan` de nuevo en los pull requests que están abiertos. Si alguien intenta ejecutar `atlantis apply` después de que los datos se hayan perdido, recibirá un error, por lo que tendrá que volver a hacer plan de todos modos.
-
-Para HA completamente sin estado (sin sistema de archivos compartido ni volumen persistente), Atlantis admite almacenamiento externo de planes mediante `--enable-external-stores` con un backend compatible con S3. Los planes se cargan a S3 después de `terraform plan` y se restauran automáticamente cuando una réplica diferente maneja el `apply`. Combinado con Redis para locking (`--locking-db-type=redis`), esto permite ejecutar múltiples réplicas de Atlantis con volúmenes `emptyDir`. Apunta [`--job-log-dir`](server-configuration.md#job-log-dir) a un volumen compartido o de red (por ejemplo NFS, EFS o un bucket de S3 montado como sistema de archivos) para que los logs de los jobs se puedan ver desde cualquier réplica y tras los reinicios. Consulta [server configuration](server-configuration.md) para más detalles.
+Por defecto, los clones, planes y logs de jobs se guardan en el volumen de cada réplica, y los `apply` se envían a la réplica que hizo el plan. Para que los planes y los logs de jobs terminados estén disponibles en todas las réplicas, y se conserven si se pierde una réplica, activa `--enable-external-stores` con un `plan_store` y un `log_store` compatibles con S3. Si aun así se pierde un plan, ejecuta `atlantis plan` de nuevo: `atlantis apply` no se ejecuta sin un plan que coincida.
 
 **P: ¿Cómo agregar SSL al servidor Atlantis?**
 

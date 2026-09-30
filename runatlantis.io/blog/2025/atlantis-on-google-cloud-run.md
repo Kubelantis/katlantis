@@ -5,6 +5,10 @@ lang: en-US
 
 # Atlantis on Google Cloud Run
 
+::: warning
+This post describes upstream Atlantis. This fork (katlantis) no longer supports Redis or `--locking-db-type`: locks and pull status are stored in Kubernetes Leases and PullStatus resources. See [Kubernetes-native Atlantis](https://github.com/App-First-Step/katlantis/blob/master/docs/kubernetes-native.md).
+:::
+
 ::: info
 Though written for Google Cloud Run, this deployment architecture also applies to AWS Fargate, Azure Container Instances, and Kubernetes.
 :::

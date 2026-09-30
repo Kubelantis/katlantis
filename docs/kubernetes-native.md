@@ -31,7 +31,6 @@ Without Helm, the server flags are:
 
 ```bash
 atlantis server \
-  --locking-db-type=kubernetes \
   --cluster-token=$ATLANTIS_CLUSTER_TOKEN   # plus POD_NAME, POD_NAMESPACE, POD_IP from the downward API
 ```
 
@@ -180,14 +179,10 @@ See [plan-risk.md](plan-risk.md).
 
 ## Roadmap
 
-- **M5: remove BoltDB and Redis.** They are kept for now so the fork can merge
-  from upstream and so single-replica users can migrate. The removal is:
-  1. Make `kubernetes` the default `--locking-db-type`.
-  2. Add a one-shot `atlantis migrate-db --from=boltdb|redis` that copies
-     locks and pull status into Leases/PullStatuses.
-  3. Delete `server/core/boltdb`, `server/core/redis`, their flags, docs and
-     `docker-compose` service, and the `go.etcd.io/bbolt`, `go-redis` and
-     `miniredis` dependencies.
-  4. Port the e2e tests from BoltDB to a fake-client KubeDB. The conformance
-     suite already guarantees identical behaviour.
+- **M5, done: BoltDB and Redis removed.** Kubernetes Leases and PullStatus
+  resources are the only storage. `--locking-db-type` and the `--redis-*`
+  flags are gone, and tests use a fake-client KubeDB that passes the same
+  conformance suite as the real API server. There is no migration tool: the
+  fork was never released with BoltDB or Redis state to carry over. Coming
+  from upstream Atlantis, re-plan open pull requests after switching.
 - Store drift results as a CRD and aggregate the job list across replicas.

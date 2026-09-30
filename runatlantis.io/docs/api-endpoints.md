@@ -1154,7 +1154,7 @@ curl --request GET 'https://<ATLANTIS_HOST_NAME>/healthz'
 
 #### Description
 
-Readiness endpoint. Returns 200 if the server is ready to handle requests, including connectivity to external dependencies (e.g. Redis). Returns 503 if any dependency is unreachable. Suitable for Kubernetes readiness probes.
+Readiness endpoint for Kubernetes readiness probes. Returns 200 once the replica has started and 503 while it is starting or draining for shutdown. It deliberately does not probe the Kubernetes API: every replica shares it, so an API outage must not remove all replicas from the Service at once. API reachability is reported by the `atlantis_cluster_api_healthy` metric.
 
 #### Sample Request
 
@@ -1176,8 +1176,7 @@ Returns HTTP 503:
 
 ```json
 {
-  "status": "error",
-  "error": "failed to ping redis: ..."
+  "status": "draining"
 }
 ```
 

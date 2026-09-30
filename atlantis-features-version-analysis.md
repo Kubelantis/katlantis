@@ -2,6 +2,8 @@
 
 This document provides a comprehensive analysis of Atlantis features and the versions when they were introduced, based on the changelog, merged PRs, and documentation.
 
+> **katlantis:** this analysis covers upstream Atlantis. This fork removed the BoltDB and Redis backends, `--locking-db-type` and the `--redis-*` flags; Kubernetes Leases and PullStatus resources are its only storage.
+
 ## Server Configuration Features
 
 ### Core Features (v0.1.0+)

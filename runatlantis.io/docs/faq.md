@@ -14,11 +14,9 @@ Terraform locking can be used alongside Atlantis locking since Atlantis is simpl
 
 A: Atlantis server can easily be run under the supervision of an init system like `upstart` or `systemd` to make sure `atlantis server` is always running.
 
-Atlantis, by default, stores all locking and Terraform plans locally on disk under the `--data-dir` directory (defaults to `~/.atlantis`). If multiple Atlantis hosts are run by utilizing a shared redis backend, then it's important that the `data-dir` is using a shared filesystem between hosts.
+Atlantis stores locks and pull request status in the Kubernetes API (Leases and `PullStatus` resources), so any number of replicas can run at once. Each pull request is handled by one replica; webhooks that reach another replica are forwarded to it. See [Kubernetes-native Atlantis](https://github.com/App-First-Step/katlantis/blob/master/docs/kubernetes-native.md) and the Helm chart.
 
-However, if you were to lose the data, all you would need to do is run `atlantis plan` again on the pull requests that are open. If someone tries to run `atlantis apply` after the data has been lost then they will get an error back, so they will have to re-plan anyway.
-
-For fully stateless HA (no shared filesystem or persistent volume), Atlantis supports external plan storage via `--enable-external-stores` with an S3-compatible backend. Plans are uploaded to S3 after `terraform plan` and restored automatically when a different replica handles the `apply`. Combined with Redis for locking (`--locking-db-type=redis`), this allows running multiple Atlantis replicas with `emptyDir` volumes. Point [`--job-log-dir`](server-configuration.md#job-log-dir) at a shared or network volume (for example NFS, EFS, or an S3 bucket mounted as a filesystem) so job logs are viewable from any replica and across restarts. See [server configuration](server-configuration.md) for details.
+Clones, plans and job logs are kept on each replica's volume by default, and applies are routed to the replica that made the plan. To make plans and completed job logs available to every replica, and keep them if a replica is lost, enable `--enable-external-stores` with an S3-compatible `plan_store` and `log_store`. If a plan is lost anyway, run `atlantis plan` again: `atlantis apply` refuses to run without a matching plan.
 
 **Q: How to add SSL to Atlantis server?**
 

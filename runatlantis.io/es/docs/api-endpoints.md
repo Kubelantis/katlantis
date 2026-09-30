@@ -1154,7 +1154,7 @@ curl --request GET 'https://<ATLANTIS_HOST_NAME>/healthz'
 
 #### Descripción
 
-Endpoint de preparación. Devuelve 200 si el servidor está listo para manejar solicitudes, incluida la conectividad con dependencias externas (p. ej. Redis). Devuelve 503 si alguna dependencia es inalcanzable. Adecuado para sondas de preparación de Kubernetes.
+Endpoint de preparación para las sondas de preparación (readiness) de Kubernetes. Devuelve 200 cuando la réplica ha arrancado y 503 mientras arranca o se está drenando para apagarse. No comprueba la API de Kubernetes a propósito: todas las réplicas la comparten, así que una caída de la API no debe sacar a todas las réplicas del Service a la vez. La métrica `atlantis_cluster_api_healthy` indica si la API es accesible.
 
 #### Solicitud de ejemplo
 
@@ -1176,8 +1176,7 @@ Devuelve HTTP 503:
 
 ```json
 {
-  "status": "error",
-  "error": "failed to ping redis: ..."
+  "status": "draining"
 }
 ```
 

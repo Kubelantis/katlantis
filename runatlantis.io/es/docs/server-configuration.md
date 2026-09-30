@@ -1188,21 +1188,6 @@ command_titles:
 Para una personalización completa del texto markdown, siga usando
 `--markdown-template-overrides-dir`.
 
-### `--locking-db-type` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --locking-db-type="<boltdb|redis>"
-# or
-ATLANTIS_LOCKING_DB_TYPE="<boltdb|redis>"
-```
-
-El tipo de base de datos de locking a usar para almacenar locks de plan y apply. El valor predeterminado es `boltdb`.
-
-Notas:
-
-- Si se establece en `boltdb`, solo un proceso puede tener acceso a la instancia boltdb.
-- Si se establece en `redis`, use `--redis-host` y `--redis-port` para modo de nodo único, o `--redis-cluster-addresses` para modo Redis Cluster. Use `--redis-password` y (opcionalmente) `--redis-username` solo si su despliegue Redis requiere autenticación.
-
 ### `--log-level` <Badge text="v0.1.3+" type="info"/>
 
 ```bash
@@ -1318,90 +1303,6 @@ ATLANTIS_QUIET_POLICY_CHECKS=true
 ```
 
 Excluir comentarios de policy check de pull requests a menos que haya un error real de conftest. Esto también excluye advertencias. El valor predeterminado es `false`.
-
-### `--redis-cluster-addresses`
-
-```bash
-atlantis server --redis-cluster-addresses="redis-node-0:6379,redis-node-1:6379,redis-node-2:6379"
-# or
-ATLANTIS_REDIS_CLUSTER_ADDRESSES="redis-node-0:6379,redis-node-1:6379,redis-node-2:6379"
-```
-
-Lista delimitada por comas de direcciones de nodos de clúster Redis en el formato `host:port`. Cuando se establece, Atlantis usa modo Redis Cluster en lugar de modo de nodo único. Esto es mutuamente excluyente con `--redis-host`/`--redis-port` (que se usan para modo de nodo único).
-
-### `--redis-db` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-db=0
-# or
-ATLANTIS_REDIS_DB=0
-```
-
-La base de datos Redis a usar cuando se usa un tipo Locking DB de `redis`. El valor predeterminado es `0`.
-
-### `--redis-host` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-host="localhost"
-# or
-ATLANTIS_REDIS_HOST="localhost"
-```
-
-El hostname Redis cuando se usa un tipo Locking DB de `redis`.
-
-### `--redis-insecure-skip-verify` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-insecure-skip-verify=false
-# or
-ATLANTIS_REDIS_INSECURE_SKIP_VERIFY=false
-```
-
-Controla si el cliente Redis verifica la cadena de certificados y el nombre de host del servidor Redis. Si es true, acepta cualquier certificado presentado por el servidor y cualquier nombre de host en ese certificado. El valor predeterminado es `false`.
-
-::: warning SECURITY WARNING
-Si esto está habilitado, TLS es susceptible a ataques de machine-in-the-middle a menos que se use verificación personalizada.
-:::
-
-### `--redis-password` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-password="password123"
-# or (recommended)
-ATLANTIS_REDIS_PASSWORD="password123"
-```
-
-La contraseña Redis cuando se usa un tipo Locking DB de `redis`.
-
-### `--redis-port` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-port=6379
-# or
-ATLANTIS_REDIS_PORT=6379
-```
-
-El puerto Redis cuando se usa un tipo Locking DB de `redis`. El valor predeterminado es `6379`.
-
-### `--redis-tls-enabled` <Badge text="v0.19.9+" type="info"/>
-
-```bash
-atlantis server --redis-tls-enabled=false
-# or
-ATLANTIS_REDIS_TLS_ENABLED=false
-```
-
-Habilita una conexión TLS, con versión mínima 1.2, a Redis cuando se usa un tipo Locking DB de `redis`. El valor predeterminado es `false`.
-
-### `--redis-username`
-
-```bash
-atlantis server --redis-username="myuser"
-# or
-ATLANTIS_REDIS_USERNAME="myuser"
-```
-
-El nombre de usuario Redis cuando se usa un tipo Locking DB de `redis`. Útil cuando Redis está configurado con autenticación basada en ACL.
 
 ### `--repo-allowlist` <Badge text="v0.13.0" type="info"/>
 
