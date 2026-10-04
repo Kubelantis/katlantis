@@ -432,6 +432,46 @@ ATLANTIS_CHECKOUT_STRATEGY="<branch|merge>"
 Cómo hacer checkout de pull requests. Use `branch` o `merge`.
 El valor predeterminado es `branch`. Vea [Checkout Strategy](checkout-strategy.md) para más detalles.
 
+### `--cluster-address`
+
+```bash
+atlantis server --cluster-address="http://10.0.0.5:4142"
+# or
+ATLANTIS_CLUSTER_ADDRESS="http://10.0.0.5:4142"
+```
+
+URL que usan las demás réplicas para llegar al listener interno de clúster de esta réplica. El valor predeterminado es `http://$POD_IP:<cluster-port>`, así que defina la variable de entorno `POD_IP` mediante la downward API.
+
+### `--cluster-plan-holder-wait-seconds`
+
+```bash
+atlantis server --cluster-plan-holder-wait-seconds=180
+# or
+ATLANTIS_CLUSTER_PLAN_HOLDER_WAIT_SECONDS=180
+```
+
+Cuando no hay un almacén externo de plans configurado, `atlantis apply` se ejecuta en la réplica que hizo el plan, porque es allí donde están los archivos del plan. Si esa réplica se está reiniciando (un pod de un StatefulSet conserva su nombre y su volumen), el apply espera hasta este número de segundos a que vuelva antes de ejecutarse en otra réplica, que puede necesitar un plan nuevo. El valor predeterminado es `180`; un valor negativo desactiva la espera.
+
+### `--cluster-port`
+
+```bash
+atlantis server --cluster-port=4142
+# or
+ATLANTIS_CLUSTER_PORT=4142
+```
+
+Puerto del listener interno usado para el tráfico entre réplicas (comandos reenviados, limpieza de pull requests y salida de jobs a través de proxy). El valor predeterminado es `4142`. No exponga este puerto mediante un Ingress ni un Service público.
+
+### `--cluster-token`
+
+```bash
+atlantis server --cluster-token="<secret>"
+# or
+ATLANTIS_CLUSTER_TOKEN="<secret>"
+```
+
+Secreto compartido que autentica las llamadas entre réplicas; todas las réplicas deben usar el mismo token. Si no se define, se genera un token aleatorio y se registra una advertencia, lo que solo sirve para una única réplica: réplicas con tokens distintos no pueden reenviarse trabajo. Móntelo desde un Secret de Kubernetes con la variable de entorno `ATLANTIS_CLUSTER_TOKEN`.
+
 ### `--config` <Badge text="v0.1.3+" type="info"/>
 
 ```bash
@@ -451,9 +491,10 @@ ATLANTIS_DATA_DIR="path/to/data/dir"
 ```
 
 Directorio donde Atlantis almacenará sus datos. Se creará si no existe.
-El valor predeterminado es `~/.atlantis`. Atlantis almacenará aquí su base de datos, repos checked out, plans de Terraform por defecto y binarios de
-Terraform descargados. Si Atlantis pierde este directorio, los [locks](locking.md)
-se perderán y los plans no aplicados se perderán.
+El valor predeterminado es `~/.atlantis`. Atlantis almacena aquí los repos checked out, los plans de Terraform por defecto y los binarios de
+Terraform descargados. Los [locks](locking.md) y el estado de los pull requests no se guardan aquí: se almacenan en
+la API de Kubernetes, así que sobreviven a la pérdida de este directorio. Si Atlantis pierde este directorio, los plans no aplicados
+se pierden (a menos que se configure un almacén externo de plans con `--enable-external-stores`) y hay que volver a hacer plan.
 
 La salida de los jobs también se escribe aquí, en `job-logs/`, a menos que
 se configure [`--job-log-dir`](#job-log-dir).
@@ -1137,6 +1178,26 @@ lo admiten. Para
 S3, use un montaje que admita añadir datos, como s3fs; Mountpoint for Amazon
 S3 no admite añadir datos a archivos en buckets de uso general.
 
+### `--kubernetes-identity`
+
+```bash
+atlantis server --kubernetes-identity="atlantis-0"
+# or
+ATLANTIS_KUBERNETES_IDENTITY="atlantis-0"
+```
+
+Identidad única de esta réplica, usada como titular de sus Leases. El valor predeterminado es `$POD_NAME` y, si no existe, el nombre del host.
+
+### `--kubernetes-namespace`
+
+```bash
+atlantis server --kubernetes-namespace="atlantis"
+# or
+ATLANTIS_KUBERNETES_NAMESPACE="atlantis"
+```
+
+Namespace en el que Atlantis almacena sus Leases y sus recursos `PullStatus`. El valor predeterminado es `$POD_NAMESPACE` y, si no existe, el namespace de la service account.
+
 ### `--language` <Badge text="v0.45.0+" type="info"/>
 
 ```bash
@@ -1283,6 +1344,36 @@ hasta que todos los proyectos modificados se apliquen.
 El valor predeterminado es `false`.
 
 Solo soportado en GitLab
+
+### `--plan-risk-enabled`
+
+```bash
+atlantis server --plan-risk-enabled
+# or
+ATLANTIS_PLAN_RISK_ENABLED=true
+```
+
+Evalúa el riesgo de cada plan con [TypeSafe](https://docs.typesafe.ai) y lo muestra en el comentario del plan. Añade el requisito de apply `plan_risk`, que bloquea los applies sin aprobación de plans por encima de `--plan-risk-max-unapproved-tier`. Requiere `--typesafe-api-key`. Solo se envían las direcciones, tipos y acciones de los recursos de `terraform show -json`, nunca los valores de los atributos.
+
+### `--plan-risk-failure-tier`
+
+```bash
+atlantis server --plan-risk-failure-tier="<low|medium|high|critical>"
+# or
+ATLANTIS_PLAN_RISK_FAILURE_TIER="<low|medium|high|critical>"
+```
+
+Nivel de riesgo asignado cuando no se puede evaluar un plan (por ejemplo, si la API de TypeSafe no está accesible). El valor predeterminado es `high`, de modo que un fallo de evaluación nunca hace un apply más permisivo.
+
+### `--plan-risk-max-unapproved-tier`
+
+```bash
+atlantis server --plan-risk-max-unapproved-tier="<low|medium|high|critical>"
+# or
+ATLANTIS_PLAN_RISK_MAX_UNAPPROVED_TIER="<low|medium|high|critical>"
+```
+
+Nivel de riesgo más alto que el requisito de apply `plan_risk` permite sin aprobación del pull request. El valor predeterminado es `low`.
 
 ### `--port` <Badge text="v0.1.3+" type="info"/>
 
@@ -1586,6 +1677,46 @@ ATLANTIS_TFE_TOKEN='xxx.atlasv1.yyy'
 ```
 
 Un token para integración Terraform Cloud/Terraform Enterprise. Vea [Terraform Cloud](terraform-cloud.md) para más detalles.
+
+### `--tracing-enabled`
+
+```bash
+atlantis server --tracing-enabled
+# or
+ATLANTIS_TRACING_ENABLED=true
+```
+
+Exporta trazas de OpenTelemetry por OTLP/gRPC para webhooks, comandos, proyectos y pasos de workflow. Configure el exportador y el muestreo con las variables de entorno estándar `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER` y `OTEL_TRACES_SAMPLER_ARG`. El contexto de traza siempre se propaga entre réplicas, aunque la exportación esté desactivada.
+
+### `--typesafe-api-key`
+
+```bash
+atlantis server --typesafe-api-key="<key>"
+# or
+ATLANTIS_TYPESAFE_API_KEY="<key>"
+```
+
+Clave de la API de TypeSafe usada para evaluar el riesgo de los plans. Debe definirse con la variable de entorno `ATLANTIS_TYPESAFE_API_KEY`.
+
+### `--typesafe-api-url`
+
+```bash
+atlantis server --typesafe-api-url="https://api.typesafe.ai"
+# or
+ATLANTIS_TYPESAFE_API_URL="https://api.typesafe.ai"
+```
+
+URL base de la API de TypeSafe. El valor predeterminado es `https://api.typesafe.ai`.
+
+### `--typesafe-model`
+
+```bash
+atlantis server --typesafe-model="jev-1.13.0"
+# or
+ATLANTIS_TYPESAFE_MODEL="jev-1.13.0"
+```
+
+Modelo de TypeSafe usado para evaluar el riesgo de los plans. El valor predeterminado es `jev-1.13.0`. Fije un modelo con versión en lugar de un alias como `jev-latest` para que los niveles de riesgo no cambien al publicarse un modelo nuevo.
 
 ### `--use-tf-plugin-cache` <Badge text="v0.26.0+" type="info"/>
 

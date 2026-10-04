@@ -471,7 +471,7 @@ atlantis server --cluster-token="<secret>"
 ATLANTIS_CLUSTER_TOKEN="<secret>"
 ```
 
-Shared secret that authenticates calls between replicas. Required . Mount it from a Kubernetes Secret with the `ATLANTIS_CLUSTER_TOKEN` environment variable.
+Shared secret that authenticates calls between replicas; every replica must use the same token. If unset, a random token is generated and a warning is logged, which only suits a single replica: replicas with different tokens cannot forward work to each other. Mount it from a Kubernetes Secret with the `ATLANTIS_CLUSTER_TOKEN` environment variable.
 
 ### `--config` <Badge text="v0.1.3+" type="info"/>
 
@@ -492,9 +492,10 @@ ATLANTIS_DATA_DIR="path/to/data/dir"
 ```
 
 Directory where Atlantis will store its data. Will be created if it doesn't exist.
-Defaults to `~/.atlantis`. Atlantis will store its database, checked out repos, Terraform plans by default, and downloaded
-Terraform binaries here. If Atlantis loses this directory, [locks](locking.md)
-will be lost and unapplied plans will be lost.
+Defaults to `~/.atlantis`. Atlantis stores checked out repos, Terraform plans by default, and downloaded
+Terraform binaries here. [Locks](locking.md) and pull request status are not kept here: they are stored in
+the Kubernetes API, so they survive the loss of this directory. If Atlantis loses this directory, unapplied plans
+are lost (unless an external plan store is configured with `--enable-external-stores`) and must be planned again.
 
 Job output is also written here, under `job-logs/`, unless
 [`--job-log-dir`](#job-log-dir) is set.
