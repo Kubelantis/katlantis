@@ -1527,11 +1527,6 @@ ATLANTIS_STATS_NAMESPACE="myatlantis"
 
 Namespace para emitir stats/metrics. Vea la sección [stats](stats.md).
 
-### `--tf-distribution` <Badge text="v0.24.0+" type="info"/>
-
-  <Badge text="Deprecated" type="warn"/>
-  Obsoleto en favor de `--default-tf-distribution`.
-
 ### `--tf-download` <Badge text="v0.18.0+" type="info"/>
 
 ```bash
@@ -1557,7 +1552,7 @@ personalizado debe coincidir con la de releases.hashicorp.com.
 
 Esto no tiene impacto si `--tf-download` está establecido en `false`.
 
-Esta configuración aún no está soportada cuando `--tf-distribution` está establecido en `opentofu`.
+Esta configuración aún no está soportada cuando `--default-tf-distribution` está establecido en `opentofu`.
 
 ### `--tfe-hostname` <Badge text="v0.8.3+" type="info"/>
 

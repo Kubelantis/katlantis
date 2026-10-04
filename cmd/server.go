@@ -152,7 +152,6 @@ const (
 	SSLCertFileFlag                  = "ssl-cert-file"
 	SSLKeyFileFlag                   = "ssl-key-file"
 	RestrictFileList                 = "restrict-file-list"
-	TFDistributionFlag               = "tf-distribution" // deprecated for DefaultTFDistributionFlag
 	TFDownloadFlag                   = "tf-download"
 	TFDownloadURLFlag                = "tf-download-url"
 	UseTFPluginCache                 = "use-tf-plugin-cache"
@@ -499,10 +498,6 @@ var stringFlags = map[string]stringFlag{
 	},
 	SSLKeyFileFlag: {
 		description: fmt.Sprintf("File containing x509 private key matching --%s.", SSLCertFileFlag),
-	},
-	TFDistributionFlag: {
-		description: "[Deprecated for --default-tf-distribution].",
-		hidden:      true,
 	},
 	TFDownloadURLFlag: {
 		description:  "Base URL to download Terraform versions from.",
@@ -1087,9 +1082,6 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	if c.Port == 0 {
 		c.Port = DefaultPort
 	}
-	if c.TFDistribution != "" && c.DefaultTFDistribution == "" {
-		c.DefaultTFDistribution = c.TFDistribution
-	}
 	if c.DefaultTFDistribution == "" {
 		c.DefaultTFDistribution = DefaultTFDistribution
 	}
@@ -1414,10 +1406,6 @@ func (s *ServerCmd) deprecationWarnings(userConfig *server.UserConfig) error {
 	//               deprecatedFlags = append(deprecatedFlags, SomeDeprecatedFlag)
 	//       }
 	//
-
-	if userConfig.TFDistribution != "" {
-		deprecatedFlags = append(deprecatedFlags, TFDistributionFlag)
-	}
 
 	if len(deprecatedFlags) > 0 {
 		warning := "WARNING: "

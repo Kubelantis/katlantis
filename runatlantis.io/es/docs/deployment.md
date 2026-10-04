@@ -645,7 +645,7 @@ Las imágenes slim se entregan sin ninguno de los dos binarios, por lo que los e
 
 * Establece [`--default-tf-version`](server-configuration.md#default-tf-version) como un flag, como `ATLANTIS_DEFAULT_TF_VERSION`, o en el archivo de configuración del servidor. Sin eso, el servidor se niega a iniciar con `terraform not found in $PATH`. La imagen slim deliberadamente no establece ningún valor predeterminado propio, porque una variable de entorno incorporada en la imagen tendría precedencia sobre una versión fijada en tu archivo de configuración.
 * `terraform_version` por proyecto en `atlantis.yaml` e `--tf-download-url` funcionan como siempre.
-* Para OpenTofu, establece `ATLANTIS_TF_DISTRIBUTION=opentofu` y proporciona una versión de OpenTofu como predeterminada.
+* Para OpenTofu, establece `ATLANTIS_DEFAULT_TF_DISTRIBUTION=opentofu` y proporciona una versión de OpenTofu como predeterminada.
 * Si las descargas salientes no están permitidas desde tu host de Atlantis (`--tf-download=false`), monta o copia en la imagen los binarios que necesitas en su lugar. Consulta [Customization](#customization) abajo.
 
 #### Customization

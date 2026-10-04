@@ -645,7 +645,7 @@ The slim images ship without either binary, so vulnerability scanners do not rep
 
 * Set [`--default-tf-version`](server-configuration.md#default-tf-version) as a flag, as `ATLANTIS_DEFAULT_TF_VERSION`, or in the server config file. Without it the server refuses to start with `terraform not found in $PATH`. The slim image deliberately sets no default of its own, because an environment variable baked into the image would take precedence over a version pinned in your config file.
 * Per-project `terraform_version` in `atlantis.yaml` and `--tf-download-url` work as usual.
-* For OpenTofu, set `ATLANTIS_TF_DISTRIBUTION=opentofu` and give an OpenTofu version as the default.
+* For OpenTofu, set `ATLANTIS_DEFAULT_TF_DISTRIBUTION=opentofu` and give an OpenTofu version as the default.
 * If outbound downloads are not allowed from your Atlantis host (`--tf-download=false`), mount or copy the binaries you need into the image instead. See [Customization](#customization) below.
 
 #### Customization
