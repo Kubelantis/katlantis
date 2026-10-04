@@ -260,6 +260,23 @@ repos:
 - `env` values may use `${BASE_REPO_OWNER}`, `${BASE_REPO_NAME}`, `${REPO_REL_DIR}`, `${WORKSPACE}`, `${PROJECT_NAME}`, `${PULL_NUM}` and `${HEAD_COMMIT}`.
 - `extra_args` keys are built-in steps: `init`, `plan`, `apply`, `show`, `policy_check`, `import`, `state_rm`.
 
+### Migrating Custom Workflows To Native Inputs
+
+`atlantis migrate-workflows` converts custom workflows, workflow hooks and custom policy checks into `inputs`:
+
+```bash
+atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml --report migration.md
+# review the printed files, then:
+atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml --write
+```
+
+- Built-in steps and their arguments, fixed env values, and env values built from `echo "...$BASE_REPO_NAME..."` become inputs.
+- `rm -rf .terraform`, `terraform workspace select $WORKSPACE` and `echo` placeholders are dropped: native workflows already cover them.
+- `run: terraform plan ...` style commands become the built-in step with extra arguments.
+- Other custom commands, `multienv`, workflow hooks and `custom_policy_check` are removed and listed in the report. With a TypeSafe API key (`ATLANTIS_TYPESAFE_API_KEY`), Jev labels each removed command (wrapper tool, policy scanner, cost estimation, credentials, ...) so the report says what replaces it. Labels below 0.8 confidence are marked uncertain. Labels never change the converted files.
+- A server-side workflow named `default` becomes a first catch-all repo entry with inputs.
+- `--write` keeps the originals as `.orig`; `--strict` exits non-zero if anything was removed or needs review.
+
 ### Running Scripts Before Atlantis Workflows
 
 If you want to run scripts that would execute before Atlantis can run default or

@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/runatlantis/atlantis/cmd"
 	"github.com/runatlantis/atlantis/server/logging"
@@ -49,8 +50,10 @@ func main() {
 	}
 	version := &cmd.VersionCmd{AtlantisVersion: atlantisVersion}
 	testdrive := &cmd.TestdriveCmd{}
+	migrateWorkflows := &cmd.MigrateWorkflowsCmd{Stdout: os.Stdout, Stderr: os.Stderr}
 	cmd.RootCmd.AddCommand(server.Init())
 	cmd.RootCmd.AddCommand(version.Init())
 	cmd.RootCmd.AddCommand(testdrive.Init())
+	cmd.RootCmd.AddCommand(migrateWorkflows.Init())
 	cmd.Execute()
 }
