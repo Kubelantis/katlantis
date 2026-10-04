@@ -236,6 +236,30 @@ projects:
   import_requirements: []
 ```
 
+### Native Inputs
+
+`inputs` configures the built-in `init`, `plan` and `apply` steps without a custom workflow. Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` replace it field by field.
+
+```yaml
+repos:
+  - id: /.*/
+    allowed_overrides: [inputs]
+    inputs:
+      var_files: [env/prod.tfvars]          # plan/import: -var-file, in order
+      vars:                                 # plan/import: -var, sorted by name
+        region: eu-west-1
+      backend_config: [prod.backend.hcl]    # init: -backend-config, plus -reconfigure
+      env:                                  # every step
+        TF_AWS_DEFAULT_TAGS_repository: "github.com/${BASE_REPO_OWNER}/${BASE_REPO_NAME}"
+      extra_args:                           # appended to the built-in step
+        plan: [-lock-timeout=5m]
+```
+
+- Paths are relative to the project directory and may not point outside the repository.
+- `backend_config` entries are files or `key=value` pairs. `init` also gets `-reconfigure`, so projects that switch backends between environments need no cleanup step.
+- `env` values may use `${BASE_REPO_OWNER}`, `${BASE_REPO_NAME}`, `${REPO_REL_DIR}`, `${WORKSPACE}`, `${PROJECT_NAME}`, `${PULL_NUM}` and `${HEAD_COMMIT}`.
+- `extra_args` keys are built-in steps: `init`, `plan`, `apply`, `show`, `policy_check`, `import`, `state_rm`.
+
 ### Running Scripts Before Atlantis Workflows
 
 If you want to run scripts that would execute before Atlantis can run default or
@@ -537,10 +561,11 @@ If you set a workflow with the key `default`, it will override this.
 | branch | string | none | no | An regex matching pull requests by base branch (the branch the pull request is getting merged into). By default, all branches are matched |
 | repo_config_file | string | none | no | Repo config file path in this repo. By default, use `atlantis.yaml` which is located on repository root. When multiple atlantis servers work with the same repo, please set different file names. |
 | workflow | string | none | no | A custom workflow. |
+| inputs | [Inputs](#native-inputs) | none | no | Native inputs for the built-in steps: `var_files`, `vars`, `backend_config`, `env`, `extra_args`. |
 | plan_requirements | []string | none | no | Requirements that must be satisfied before `atlantis plan` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | apply_requirements | []string | none | no | Requirements that must be satisfied before `atlantis apply` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | import_requirements | []string | none | no | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
-| allowed_overrides | []string | none | no | A list of restricted keys that `atlantis.yaml` files can override. The only supported keys are `apply_requirements`, `workflow`, `delete_source_branch_on_merge`,`repo_locking`, `repo_locks`, and `custom_policy_check` |
+| allowed_overrides | []string | none | no | A list of restricted keys that `atlantis.yaml` files can override. The only supported keys are `apply_requirements`, `workflow`, `delete_source_branch_on_merge`,`repo_locking`, `repo_locks`, `custom_policy_check` and `inputs` |
 | allowed_workflows | []string | none | no | A list of workflows that `atlantis.yaml` files can select from. |
 | allow_custom_workflows | bool | false | no | Whether or not to allow [Custom Workflows](custom-workflows.md). |
 | delete_source_branch_on_merge | bool | false | no | Whether or not to delete the source branch on merge. |

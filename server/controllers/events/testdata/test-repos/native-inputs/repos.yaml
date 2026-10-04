@@ -1,0 +1,9 @@
+repos:
+- id: /.*/
+  inputs:
+    var_files: [prod.tfvars]
+    vars:
+      team: platform
+    backend_config: [path=custom.tfstate]
+    env:
+      TF_VAR_repo_tag: "${BASE_REPO_NAME}:${REPO_REL_DIR}"

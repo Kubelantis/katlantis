@@ -1205,7 +1205,11 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 	unlock := p.WorkingDir.GitReadLock(ctx.Pull.BaseRepo, ctx.Pull, ctx.Workspace)
 	defer unlock()
 
-	envs := make(map[string]string)
+	// Native inputs seed the environment of every step.
+	envs := ctx.InputsEnv()
+	if envs == nil {
+		envs = make(map[string]string)
+	}
 	for _, step := range steps {
 		out, err := p.runStep(step, ctx, absPath, envs)
 

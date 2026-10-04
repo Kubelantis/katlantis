@@ -198,6 +198,8 @@ type Project struct {
 	PolicyCheck               *bool
 	CustomPolicyCheck         *bool
 	SilencePRComments         []string
+	// Inputs override the server-side inputs when allowed.
+	Inputs *Inputs
 }
 
 // GetName returns the name of the project or an empty string if there is no

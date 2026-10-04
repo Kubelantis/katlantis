@@ -110,6 +110,9 @@ type ProjectContext struct {
 	PullStatus *models.PullStatus
 	// ProjectPolicyStatus is the status of policy sets of the current project prior to this command.
 	ProjectPolicyStatus []models.PolicySetStatus
+	// Env is set for every step of the project, from the native inputs. Values
+	// may still contain ${...} references to context; see InputsEnv.
+	Env map[string]string
 	// ProjectPlanRisk is the risk assessment of the current project's latest plan.
 	ProjectPlanRisk *models.PlanRisk
 	// RunPolicyChecks is true for API workflows that explicitly execute policy
@@ -300,4 +303,19 @@ func (p ProjectContext) Ctx() context.Context {
 		return context.Background()
 	}
 	return p.TraceContext
+}
+
+// InputsEnv returns the project's input environment with ${...} references
+// to the pull request context resolved.
+func (p ProjectContext) InputsEnv() map[string]string {
+	inputs := valid.Inputs{Env: p.Env}
+	return inputs.ExpandEnv(map[string]string{
+		"BASE_REPO_OWNER": p.BaseRepo.Owner,
+		"BASE_REPO_NAME":  p.BaseRepo.Name,
+		"REPO_REL_DIR":    p.RepoRelDir,
+		"WORKSPACE":       p.Workspace,
+		"PROJECT_NAME":    p.ProjectName,
+		"PULL_NUM":        strconv.Itoa(p.Pull.Num),
+		"HEAD_COMMIT":     p.Pull.HeadCommit,
+	})
 }

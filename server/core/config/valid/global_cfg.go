@@ -125,6 +125,8 @@ type Repo struct {
 	CustomPolicyCheck         *bool
 	AutoDiscover              *AutoDiscover
 	SilencePRComments         []string
+	// Inputs are the default native inputs for matching repos.
+	Inputs *Inputs
 }
 
 type MergedProjectCfg struct {
@@ -151,6 +153,8 @@ type MergedProjectCfg struct {
 	PolicyCheck               bool
 	CustomPolicyCheck         bool
 	SilencePRComments         []string
+	// Env is set for every step of the project (from inputs).
+	Env map[string]string
 }
 
 // WorkflowHook is a map of custom run commands to run before or after workflows.
@@ -259,7 +263,7 @@ func NewGlobalCfgFromArgs(args GlobalCfgArgs) GlobalCfg {
 	customPolicyCheck := false
 	var silencePRComments []string
 	if args.AllowAllRepoSettings {
-		allowedOverrides = []string{PlanRequirementsKey, ApplyRequirementsKey, ImportRequirementsKey, WorkflowKey, DeleteSourceBranchOnMergeKey, RepoLockingKey, RepoLocksKey, PolicyCheckKey, SilencePRCommentsKey}
+		allowedOverrides = []string{PlanRequirementsKey, ApplyRequirementsKey, ImportRequirementsKey, WorkflowKey, DeleteSourceBranchOnMergeKey, RepoLockingKey, RepoLocksKey, PolicyCheckKey, SilencePRCommentsKey, InputsKey}
 		allowCustomWorkflows = true
 	}
 
@@ -427,6 +431,16 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		log.Debug("MergeProjectCfg completed")
 	}
 
+	// Native inputs: server-side defaults, replaced field by field by the
+	// project's inputs when the server allows it. They compile into the
+	// built-in steps, so no custom step is involved.
+	inputs := g.matchingInputs(repoID)
+	if slices.Contains(allowedOverrides, InputsKey) && proj.Inputs != nil {
+		log.Debug("overriding server-defined %s with repo settings", InputsKey)
+		inputs = inputs.Override(proj.Inputs)
+	}
+	workflow = inputs.Apply(workflow)
+
 	log.Debug("final settings: %s: [%s], %s: [%s], %s: [%s], %s: %s, %s: %t, %s: %s, %s: %t, %s: %t, %s: [%s]",
 		PlanRequirementsKey, strings.Join(planReqs, ","),
 		ApplyRequirementsKey, strings.Join(applyReqs, ","),
@@ -460,6 +474,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		PolicyCheck:               policyCheck,
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
+		Env:                       inputs.Env,
 	}
 }
 
@@ -468,6 +483,8 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repoRelDir string, workspace string) MergedProjectCfg {
 	log.Debug("building config based on server-side config")
 	planReqs, applyReqs, importReqs, workflow, _, _, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments := g.getMatchingCfg(log, repoID)
+	inputs := g.matchingInputs(repoID)
+	workflow = inputs.Apply(workflow)
 	return MergedProjectCfg{
 		PlanRequirements:          planReqs,
 		ApplyRequirements:         applyReqs,
@@ -486,7 +503,20 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 		PolicyCheck:               policyCheck,
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
+		Env:                       inputs.Env,
 	}
+}
+
+// matchingInputs returns the inputs of the last server-side repo entry that
+// matches repoID and sets inputs, like the other repo settings.
+func (g GlobalCfg) matchingInputs(repoID string) Inputs {
+	var inputs Inputs
+	for _, repo := range g.Repos {
+		if repo.IDMatches(repoID) && repo.Inputs != nil {
+			inputs = *repo.Inputs
+		}
+	}
+	return inputs
 }
 
 // RepoAutoDiscoverCfg returns the inherited AutoDiscover config from matching
@@ -544,6 +574,9 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 		}
 		if p.RepoLocks != nil && !slices.Contains(allowedOverrides, RepoLocksKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", RepoLocksKey, AllowedOverridesKey, RepoLocksKey)
+		}
+		if p.Inputs != nil && !slices.Contains(allowedOverrides, InputsKey) {
+			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", InputsKey, AllowedOverridesKey, InputsKey)
 		}
 		if p.CustomPolicyCheck != nil && !slices.Contains(allowedOverrides, CustomPolicyCheckKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", CustomPolicyCheckKey, AllowedOverridesKey, CustomPolicyCheckKey)

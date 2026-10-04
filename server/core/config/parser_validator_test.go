@@ -1348,7 +1348,7 @@ func TestParseGlobalCfg(t *testing.T) {
 			input: `repos:
 - id: /.*/
   allowed_overrides: [invalid]`,
-			expErr: "repos: (0: (allowed_overrides: \"invalid\" is not a valid override, only \"plan_requirements\", \"apply_requirements\", \"import_requirements\", \"workflow\", \"delete_source_branch_on_merge\", \"repo_locking\", \"repo_locks\", \"policy_check\", \"custom_policy_check\", and \"silence_pr_comments\" are supported.).).",
+			expErr: "repos: (0: (allowed_overrides: \"invalid\" is not a valid override, only \"plan_requirements\", \"apply_requirements\", \"import_requirements\", \"workflow\", \"delete_source_branch_on_merge\", \"repo_locking\", \"repo_locks\", \"policy_check\", \"custom_policy_check\", \"silence_pr_comments\", and \"inputs\" are supported.).).",
 		},
 		"invalid plan_requirement": {
 			input: `repos:

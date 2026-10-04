@@ -67,6 +67,7 @@ type Project struct {
 	PolicyCheck               *bool      `yaml:"policy_check,omitempty"`
 	CustomPolicyCheck         *bool      `yaml:"custom_policy_check,omitempty"`
 	SilencePRComments         []string   `yaml:"silence_pr_comments,omitempty"`
+	Inputs                    *Inputs    `yaml:"inputs,omitempty"`
 }
 
 // IsTerraformProjectDir returns true if the directory contains files that make it look like a Terraform project
@@ -156,6 +157,7 @@ func (p Project) Validate() error {
 	}
 
 	return validation.ValidateStruct(&p,
+		validation.Field(&p.Inputs),
 		validation.Field(&p.Dir, validation.Required, validation.By(validDir)),
 		validation.Field(&p.Workspace, validation.By(validWorkspace)),
 		validation.Field(&p.PlanRequirements, validation.By(validPlanReq)),
@@ -236,6 +238,7 @@ func (p Project) ToValid() valid.Project {
 		v.CustomPolicyCheck = p.CustomPolicyCheck
 	}
 
+	v.Inputs = p.Inputs.ToValid()
 	if p.SilencePRComments != nil {
 		v.SilencePRComments = p.SilencePRComments
 	}

@@ -248,7 +248,15 @@ atlantis apply -w staging -d project1
 
 ### Using .tfvars files
 
-See [Custom Workflow Use Cases: Using .tfvars files](custom-workflows.md#tfvars-files)
+Use [native inputs](server-side-repo-config.md#native-inputs) instead of a custom workflow:
+
+```yaml
+projects:
+- dir: envs/prod
+  inputs:                        # needs allowed_overrides: [inputs] on the server
+    var_files: [prod.tfvars]
+    backend_config: [prod.backend.hcl]
+```
 
 ### Adding extra arguments to Terraform commands
 
@@ -431,7 +439,15 @@ This makes `ignore_paths` useful for **multi-instance setups** where each Atlant
 
 ### Custom Backend Config
 
-See [Custom Workflow Use Cases: Custom Backend Config](custom-workflows.md#custom-backend-config)
+Use [native inputs](server-side-repo-config.md#native-inputs) instead of a custom workflow:
+
+```yaml
+projects:
+- dir: envs/prod
+  inputs:                        # needs allowed_overrides: [inputs] on the server
+    var_files: [prod.tfvars]
+    backend_config: [prod.backend.hcl]
+```
 
 ## Reference
 
