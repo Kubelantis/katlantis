@@ -258,6 +258,16 @@ projects:
     backend_config: [prod.backend.hcl]
 ```
 
+### Using Terragrunt
+
+```yaml
+projects:
+- dir: live/prod/vpc
+  tool: terragrunt               # needs allowed_overrides: [tool] on the server
+```
+
+See [Terragrunt](server-side-repo-config.md#terragrunt).
+
 ### Adding extra arguments to Terraform commands
 
 See [Custom Workflow Use Cases: Adding extra arguments to Terraform commands](custom-workflows.md#adding-extra-arguments-to-terraform-commands)
@@ -511,6 +521,8 @@ workflow: myworkflow
 | import_requirements<br />_(restricted)_ | array\[string\]         | none            | no       | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | silence_pr_comments                     | array\[string\]         | none            | no       | Silence PR comments from defined stages while preserving PR status checks. Supported values are: `plan`, `apply`.                                                                                                                       |
 | workflow <br />_(restricted)_           | string                  | none            | no       | A custom workflow. If not specified, Atlantis will use its default workflow.                                                                                                                                                            |
+| inputs <br />_(restricted)_             | [Inputs](server-side-repo-config.md#native-inputs)| none            | no       | Native inputs for the built-in steps, replacing the server-side ones field by field. Needs `allowed_overrides: [inputs]`.                                                                                                               |
+| tool <br />_(restricted)_               | string                  | `terraform`     | no       | Runs the built-in steps with `terraform` or `terragrunt`. See [Terragrunt](server-side-repo-config.md#terragrunt). Needs `allowed_overrides: [tool]`.                                                                                   |
 
 ::: tip
 A project represents a Terraform state. Typically, there is one state per directory and workspace however it's possible to

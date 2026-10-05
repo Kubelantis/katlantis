@@ -1,0 +1,6 @@
+repos:
+- id: /.*/
+  tool: terragrunt
+  inputs:
+    vars:
+      team: platform

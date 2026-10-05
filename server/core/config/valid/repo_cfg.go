@@ -200,6 +200,8 @@ type Project struct {
 	SilencePRComments         []string
 	// Inputs override the server-side inputs when allowed.
 	Inputs *Inputs
+	// Tool overrides the server-side tool when allowed.
+	Tool *string
 }
 
 // GetName returns the name of the project or an empty string if there is no

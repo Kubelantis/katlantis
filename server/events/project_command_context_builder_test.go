@@ -29,6 +29,7 @@ func TestProjectCommandContextBuilder_PullStatus(t *testing.T) {
 	projName := "project1"
 
 	projCfg := valid.MergedProjectCfg{
+		Tool:       "terraform",
 		RepoRelDir: projRepoRelDir,
 		Workspace:  projWorkspace,
 		Name:       projName,
@@ -138,6 +139,7 @@ func TestProjectCommandContextBuilder_PropagatesAPIWorkflowFlags(t *testing.T) {
 	}
 	terraformClient := tfclientmocks.NewMockClient()
 	projCfg := valid.MergedProjectCfg{
+		Tool:       "terraform",
 		RepoRelDir: "env",
 		Workspace:  "prod",
 		Name:       "app",

@@ -127,6 +127,8 @@ type Repo struct {
 	SilencePRComments         []string
 	// Inputs are the default native inputs for matching repos.
 	Inputs *Inputs
+	// Tool is the default IaC tool for matching repos.
+	Tool *string
 }
 
 type MergedProjectCfg struct {
@@ -155,6 +157,8 @@ type MergedProjectCfg struct {
 	SilencePRComments         []string
 	// Env is set for every step of the project (from inputs).
 	Env map[string]string
+	// Tool runs the built-in steps; see ToolTerraform and ToolTerragrunt.
+	Tool string
 }
 
 // WorkflowHook is a map of custom run commands to run before or after workflows.
@@ -263,7 +267,7 @@ func NewGlobalCfgFromArgs(args GlobalCfgArgs) GlobalCfg {
 	customPolicyCheck := false
 	var silencePRComments []string
 	if args.AllowAllRepoSettings {
-		allowedOverrides = []string{PlanRequirementsKey, ApplyRequirementsKey, ImportRequirementsKey, WorkflowKey, DeleteSourceBranchOnMergeKey, RepoLockingKey, RepoLocksKey, PolicyCheckKey, SilencePRCommentsKey, InputsKey}
+		allowedOverrides = []string{PlanRequirementsKey, ApplyRequirementsKey, ImportRequirementsKey, WorkflowKey, DeleteSourceBranchOnMergeKey, RepoLockingKey, RepoLocksKey, PolicyCheckKey, SilencePRCommentsKey, InputsKey, ToolKey}
 		allowCustomWorkflows = true
 	}
 
@@ -434,6 +438,11 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 	// Native inputs: server-side defaults, replaced field by field by the
 	// project's inputs when the server allows it. They compile into the
 	// built-in steps, so no custom step is involved.
+	tool := g.matchingTool(repoID)
+	if slices.Contains(allowedOverrides, ToolKey) && proj.Tool != nil {
+		log.Debug("overriding server-defined %s with repo settings: %s", ToolKey, *proj.Tool)
+		tool = *proj.Tool
+	}
 	inputs := g.matchingInputs(repoID)
 	if slices.Contains(allowedOverrides, InputsKey) && proj.Inputs != nil {
 		log.Debug("overriding server-defined %s with repo settings", InputsKey)
@@ -475,6 +484,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
 		Env:                       inputs.Env,
+		Tool:                      tool,
 	}
 }
 
@@ -483,6 +493,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repoRelDir string, workspace string) MergedProjectCfg {
 	log.Debug("building config based on server-side config")
 	planReqs, applyReqs, importReqs, workflow, _, _, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments := g.getMatchingCfg(log, repoID)
+	tool := g.matchingTool(repoID)
 	inputs := g.matchingInputs(repoID)
 	workflow = inputs.Apply(workflow)
 	return MergedProjectCfg{
@@ -504,7 +515,20 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
 		Env:                       inputs.Env,
+		Tool:                      tool,
 	}
+}
+
+// matchingTool returns the tool of the last server-side repo entry that
+// matches repoID and sets one, or ToolTerraform.
+func (g GlobalCfg) matchingTool(repoID string) string {
+	tool := ToolTerraform
+	for _, repo := range g.Repos {
+		if repo.IDMatches(repoID) && repo.Tool != nil {
+			tool = *repo.Tool
+		}
+	}
+	return tool
 }
 
 // matchingInputs returns the inputs of the last server-side repo entry that
@@ -574,6 +598,9 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 		}
 		if p.RepoLocks != nil && !slices.Contains(allowedOverrides, RepoLocksKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", RepoLocksKey, AllowedOverridesKey, RepoLocksKey)
+		}
+		if p.Tool != nil && !slices.Contains(allowedOverrides, ToolKey) {
+			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", ToolKey, AllowedOverridesKey, ToolKey)
 		}
 		if p.Inputs != nil && !slices.Contains(allowedOverrides, InputsKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", InputsKey, AllowedOverridesKey, InputsKey)

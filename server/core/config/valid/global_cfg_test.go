@@ -133,7 +133,7 @@ func TestNewGlobalCfg(t *testing.T) {
 
 			if c.allowAllRepoSettings {
 				exp.Repos[0].AllowCustomWorkflows = Bool(true)
-				exp.Repos[0].AllowedOverrides = []string{"plan_requirements", "apply_requirements", "import_requirements", "workflow", "delete_source_branch_on_merge", "repo_locking", "repo_locks", "policy_check", "silence_pr_comments", "inputs"}
+				exp.Repos[0].AllowedOverrides = []string{"plan_requirements", "apply_requirements", "import_requirements", "workflow", "delete_source_branch_on_merge", "repo_locking", "repo_locks", "policy_check", "silence_pr_comments", "inputs", "tool"}
 			}
 			if c.policyCheckEnabled {
 				exp.Repos[0].ApplyRequirements = append(exp.Repos[0].ApplyRequirements, "policies_passed")
@@ -544,6 +544,7 @@ policies:
 				WorkflowName: String("custom"),
 			},
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
@@ -595,6 +596,7 @@ policies:
 				WorkflowName: String("custom"),
 			},
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
@@ -691,6 +693,7 @@ workflows:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
@@ -734,6 +737,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"mergeable"},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
@@ -764,6 +768,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{"mergeable"},
 				ImportRequirements: []string{},
@@ -795,6 +800,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{"mergeable", "policies_passed"},
 				ImportRequirements: []string{},
@@ -827,6 +833,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"mergeable"},
 				ApplyRequirements:  []string{"approved"},
 				ImportRequirements: []string{},
@@ -858,6 +865,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{"mergeable"},
 				ImportRequirements: []string{},
@@ -889,6 +897,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{"mergeable"},
@@ -919,6 +928,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
@@ -951,6 +961,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
@@ -988,6 +999,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
 				ApplyRequirements:  []string{"approved", "mergeable"},
 				ImportRequirements: []string{"approved", "mergeable"},
@@ -1015,6 +1027,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:                 "terraform",
 				PlanRequirements:     []string{},
 				ApplyRequirements:    []string{},
 				ImportRequirements:   []string{},
@@ -1044,6 +1057,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:                 "terraform",
 				PlanRequirements:     []string{},
 				ApplyRequirements:    []string{},
 				ImportRequirements:   []string{},
@@ -1286,6 +1300,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
 				ApplyRequirements:  []string{"approved", "mergeable"},
 				ImportRequirements: []string{"approved", "mergeable"},
@@ -1326,6 +1341,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
 				ApplyRequirements:  []string{"approved", "mergeable", "policies_passed"},
 				ImportRequirements: []string{"approved", "mergeable"},
@@ -1367,6 +1383,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
 				ApplyRequirements:  []string{"approved", "mergeable"},
 				ImportRequirements: []string{"approved", "mergeable"},
@@ -1408,6 +1425,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
 				ApplyRequirements:  []string{"approved", "mergeable"},
 				ImportRequirements: []string{"approved", "mergeable"},
@@ -1449,6 +1467,7 @@ repos:
 			},
 			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
+				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
 				ApplyRequirements:  []string{"approved", "mergeable"},
 				ImportRequirements: []string{"approved", "mergeable"},

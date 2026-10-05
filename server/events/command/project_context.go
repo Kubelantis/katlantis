@@ -113,6 +113,8 @@ type ProjectContext struct {
 	// Env is set for every step of the project, from the native inputs. Values
 	// may still contain ${...} references to context; see InputsEnv.
 	Env map[string]string
+	// Tool runs the built-in steps: "terraform" (default) or "terragrunt".
+	Tool string
 	// ProjectPlanRisk is the risk assessment of the current project's latest plan.
 	ProjectPlanRisk *models.PlanRisk
 	// RunPolicyChecks is true for API workflows that explicitly execute policy

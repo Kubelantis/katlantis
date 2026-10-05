@@ -260,6 +260,23 @@ repos:
 - `env` values may use `${BASE_REPO_OWNER}`, `${BASE_REPO_NAME}`, `${REPO_REL_DIR}`, `${WORKSPACE}`, `${PROJECT_NAME}`, `${PULL_NUM}` and `${HEAD_COMMIT}`.
 - `extra_args` keys are built-in steps: `init`, `plan`, `apply`, `show`, `policy_check`, `import`, `state_rm`.
 
+### Terragrunt
+
+Set `tool: terragrunt` to run the built-in steps with [Terragrunt](https://terragrunt.gruntwork.io) instead of Terraform. List `tool` in `allowed_overrides` to let projects in `atlantis.yaml` choose.
+
+```yaml
+repos:
+  - id: /.*/
+    allowed_overrides: [tool]
+    tool: terragrunt
+```
+
+- Every built-in step runs as `terragrunt <command>` with the same arguments, so `inputs`, comment arguments, policy checks and plan files work as they do for Terraform.
+- Terragrunt runs the Terraform or OpenTofu binary Atlantis selects for the project (`terraform_version`, `terraform_distribution`) through `TG_TF_PATH`.
+- Atlantis sets `TG_NON_INTERACTIVE=true`, `TG_TF_FORWARD_STDOUT=true`, `TG_LOG_LEVEL=error` and `TG_NO_COLOR=true` so the output in pull request comments is Terraform's own. `inputs.env` can override them.
+- The `terragrunt` binary must be on `PATH`. The Atlantis image includes it on amd64 and arm64.
+- Each project is one Terragrunt module: a directory with a `terragrunt.hcl`. `run --all` is not used.
+
 ### Migrating Custom Workflows To Native Inputs
 
 `atlantis migrate-workflows` converts custom workflows, workflow hooks and custom policy checks into `inputs`:
@@ -579,10 +596,11 @@ If you set a workflow with the key `default`, it will override this.
 | repo_config_file | string | none | no | Repo config file path in this repo. By default, use `atlantis.yaml` which is located on repository root. When multiple atlantis servers work with the same repo, please set different file names. |
 | workflow | string | none | no | A custom workflow. |
 | inputs | [Inputs](#native-inputs) | none | no | Native inputs for the built-in steps: `var_files`, `vars`, `backend_config`, `env`, `extra_args`. |
+| tool | string | `terraform` | no | Runs the built-in steps with `terraform` or [`terragrunt`](#terragrunt). |
 | plan_requirements | []string | none | no | Requirements that must be satisfied before `atlantis plan` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | apply_requirements | []string | none | no | Requirements that must be satisfied before `atlantis apply` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | import_requirements | []string | none | no | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
-| allowed_overrides | []string | none | no | A list of restricted keys that `atlantis.yaml` files can override. The only supported keys are `apply_requirements`, `workflow`, `delete_source_branch_on_merge`,`repo_locking`, `repo_locks`, `custom_policy_check` and `inputs` |
+| allowed_overrides | []string | none | no | A list of restricted keys that `atlantis.yaml` files can override. The only supported keys are `apply_requirements`, `workflow`, `delete_source_branch_on_merge`,`repo_locking`, `repo_locks`, `custom_policy_check`, `inputs` and `tool` |
 | allowed_workflows | []string | none | no | A list of workflows that `atlantis.yaml` files can select from. |
 | allow_custom_workflows | bool | false | no | Whether or not to allow [Custom Workflows](custom-workflows.md). |
 | delete_source_branch_on_merge | bool | false | no | Whether or not to delete the source branch on merge. |

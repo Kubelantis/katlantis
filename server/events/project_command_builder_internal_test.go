@@ -66,6 +66,7 @@ workflows:
       - apply`,
 			repoCfg: "",
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -125,6 +126,7 @@ projects:
   terraform_version: v10.0
   `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -188,6 +190,7 @@ projects:
   terraform_version: v10.0
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -259,6 +262,7 @@ projects:
   terraform_version: v10.0
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -417,6 +421,7 @@ workflows:
       - apply
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -482,6 +487,7 @@ projects:
   workflow: custom
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -550,6 +556,7 @@ workflows:
       steps: []
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -604,6 +611,7 @@ projects:
   workspace: myworkspace
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -826,6 +834,7 @@ projects:
   terraform_version: v10.0
   `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -p myproject_1",
 				ApprovePoliciesCmd:   "atlantis approve_policies -p myproject_1",
 				BaseRepo:             baseRepo,
@@ -1017,6 +1026,7 @@ repos:
 `,
 			repoCfg: "",
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,
@@ -1081,6 +1091,7 @@ workflows:
       - policy_check
 `,
 			expCtx: command.ProjectContext{
+				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
 				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
 				BaseRepo:             baseRepo,

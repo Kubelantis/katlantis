@@ -12,7 +12,7 @@ import (
 // Categories a removed command can fall into, with what replaces it.
 var suggestions = map[string]string{
 	"placeholder":       "Nothing: it only prints text.",
-	"terragrunt":        "Set `tool: terragrunt` once native tool adapters land; Terragrunt repo-config generation becomes native project discovery.",
+	"terragrunt":        "Set `tool: terragrunt` on the repo or project; a `terragrunt run --all` or repo-config generator becomes one project per module with `tool: terragrunt`.",
 	"cdktf":             "Set `tool: cdktf` once native tool adapters land.",
 	"policy_scanner":    "Write the checks as Conftest policies for the built-in policy_check, or run the scanner in CI.",
 	"cost_estimation":   "Run cost estimation in CI, for example the Infracost GitHub Action.",

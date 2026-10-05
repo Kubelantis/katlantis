@@ -4,14 +4,17 @@
 package tfclient
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	version "github.com/hashicorp/go-version"
 	. "github.com/petergtz/pegomock/v4"
+	"github.com/runatlantis/atlantis/server/core/config/valid"
 	runtimemodels "github.com/runatlantis/atlantis/server/core/runtime/models"
 	"github.com/runatlantis/atlantis/server/core/terraform"
 	terraform_mocks "github.com/runatlantis/atlantis/server/core/terraform/mocks"
@@ -617,7 +620,7 @@ func TestDefaultClient_PrepCmd_DisplayKeepsVariablesUnexpanded(t *testing.T) {
 	argv, display, _, err := client.prepCmd(log, nil, v, "default", "/tmp",
 		[]string{"plan", "-var=token=$TF_SECRET"},
 		map[string]string{"TF_SECRET": "s3cr3t-value"},
-		[]string{"-var=token=$TF_SECRET"}, nil)
+		[]string{"-var=token=$TF_SECRET"}, nil, "")
 	Ok(t, err)
 
 	// The process still receives the expanded value.
@@ -644,7 +647,7 @@ func TestDefaultClient_PrepCmd_PathWithSpaceIsASingleArgument(t *testing.T) {
 	planPath := "/data/repos/bitbucket owner/repo/2/default/default.tfplan"
 
 	argv, _, _, err := client.prepCmd(log, nil, v, "default", "/tmp",
-		[]string{"plan", "-out", planPath}, nil, nil, nil)
+		[]string{"plan", "-out", planPath}, nil, nil, nil, "")
 
 	Ok(t, err)
 	Equals(t, []string{"echo", "plan", "-out", planPath}, argv)
@@ -667,7 +670,7 @@ func TestDefaultClient_PrepCmd_DoesNotExpandCommentArgs(t *testing.T) {
 	args := append([]string{"plan"}, commentArgs...)
 
 	// No expandable args: everything is literal.
-	argv, display, _, err := client.prepCmd(log, nil, v, "default", "/tmp", args, nil, nil, commentArgs)
+	argv, display, _, err := client.prepCmd(log, nil, v, "default", "/tmp", args, nil, nil, commentArgs, "")
 	Ok(t, err)
 	Assert(t, !strings.Contains(strings.Join(argv, " "), "ghp_CANARY_SECRET_VALUE"),
 		"comment arg was expanded into the argv: %q", argv)
@@ -676,7 +679,7 @@ func TestDefaultClient_PrepCmd_DoesNotExpandCommentArgs(t *testing.T) {
 
 	// Even when an operator's extra_args happens to be the same string, the
 	// comment copy is not expanded.
-	argv, _, _, err = client.prepCmd(log, nil, v, "default", "/tmp", args, nil, commentArgs, commentArgs)
+	argv, _, _, err = client.prepCmd(log, nil, v, "default", "/tmp", args, nil, commentArgs, commentArgs, "")
 	Ok(t, err)
 	Assert(t, !strings.Contains(strings.Join(argv, " "), "ghp_CANARY_SECRET_VALUE"),
 		"comment arg was expanded when replayed as an extra_arg: %q", argv)
@@ -692,7 +695,7 @@ func TestDefaultClient_PrepCmd_ExpandsConfiguredExtraArgs(t *testing.T) {
 	extraArgs := []string{"-var-file=$WORKSPACE.tfvars"}
 	args := append([]string{"plan"}, extraArgs...)
 
-	argv, display, _, err := client.prepCmd(log, nil, v, "staging", "/tmp", args, nil, extraArgs, nil)
+	argv, display, _, err := client.prepCmd(log, nil, v, "staging", "/tmp", args, nil, extraArgs, nil, "")
 
 	Ok(t, err)
 	Equals(t, []string{"echo", "plan", "-var-file=staging.tfvars"}, argv)
@@ -700,4 +703,45 @@ func TestDefaultClient_PrepCmd_ExpandsConfiguredExtraArgs(t *testing.T) {
 	// not reach the logs or a pull request comment.
 	Assert(t, strings.Contains(display, "$WORKSPACE"),
 		"display should keep the unexpanded reference, got %q", display)
+}
+
+// A Terragrunt project runs terragrunt with the same arguments, pointed at the
+// binary resolved for the project's version; inputs.env can override the
+// Terragrunt settings.
+func TestDefaultClient_PrepCmd_Terragrunt(t *testing.T) {
+	v, err := version.NewVersion("0.11.11")
+	Ok(t, err)
+	log := logging.NewNoopLogger(t)
+	client := &DefaultClient{defaultVersion: v, overrideTF: "/bin/terraform", overrideTerragrunt: "/bin/terragrunt"}
+
+	argv, display, env, err := client.prepCmd(log, nil, v, "default", "/tmp",
+		[]string{"plan", "-input=false"}, map[string]string{"TG_LOG_LEVEL": "debug"}, nil, nil, valid.ToolTerragrunt)
+	Ok(t, err)
+	Equals(t, []string{"/bin/terragrunt", "run", "--", "plan", "-input=false"}, argv)
+	Assert(t, strings.HasPrefix(display, "/bin/terragrunt run -- plan"), "display should show terragrunt, got %q", display)
+	Assert(t, slices.Contains(env, "TG_TF_PATH=/bin/terraform"), "TG_TF_PATH not set: %v", env)
+	Assert(t, slices.Contains(env, "TG_NON_INTERACTIVE=true"), "TG_NON_INTERACTIVE not set: %v", env)
+	// The project env comes last, so it wins.
+	last := ""
+	for _, e := range env {
+		if strings.HasPrefix(e, "TG_LOG_LEVEL=") {
+			last = e
+		}
+	}
+	Equals(t, "TG_LOG_LEVEL=debug", last)
+
+	// Terraform projects are unchanged.
+	argv, _, env, err = client.prepCmd(log, nil, v, "default", "/tmp", []string{"plan"}, nil, nil, nil, valid.ToolTerraform)
+	Ok(t, err)
+	Equals(t, []string{"/bin/terraform", "plan"}, argv)
+	Assert(t, !slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "TG_TF_PATH=") }), "terraform project got Terragrunt env: %v", env)
+}
+
+func TestDefaultClient_PrepCmd_TerragruntMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	v, err := version.NewVersion("0.11.11")
+	Ok(t, err)
+	client := &DefaultClient{defaultVersion: v, overrideTF: "/bin/terraform"}
+	_, _, _, err = client.prepCmd(logging.NewNoopLogger(t), nil, v, "default", "/tmp", []string{"plan"}, nil, nil, nil, valid.ToolTerragrunt)
+	Assert(t, errors.Is(err, errTerragruntMissing), "expected errTerragruntMissing, got %v", err)
 }

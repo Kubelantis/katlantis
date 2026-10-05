@@ -34,6 +34,16 @@ RUN case $(uname -m) in x86_64|amd64) ARCH="x86_64" ;; aarch64|arm64|armv7l) ARC
     rm conftest_${CONFTEST_VERSION}_Linux_${ARCH}.tar.gz && \
     rm checksums.txt
 
+# Install terragrunt
+# renovate: datasource=github-releases depName=gruntwork-io/terragrunt
+ENV TERRAGRUNT_VERSION=1.1.6
+RUN case "$(uname -m)" in x86_64|amd64) ARCH="amd64" ;; aarch64|arm64) ARCH="arm64" ;; *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; esac && \
+    curl -LOs "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${ARCH}" && \
+    curl -LOs "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/SHA256SUMS" && \
+    grep " terragrunt_linux_${ARCH}$" SHA256SUMS | sha256sum -c && \
+    install -m 0755 "terragrunt_linux_${ARCH}" /usr/local/bin/terragrunt && \
+    rm "terragrunt_linux_${ARCH}" SHA256SUMS
+
 RUN useradd -u 1001 -m atlantis
 
 USER atlantis

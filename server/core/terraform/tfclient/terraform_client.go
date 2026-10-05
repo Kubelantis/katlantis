@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-config-inspect/tfconfig"
 	"github.com/mitchellh/go-homedir"
 
+	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/runtime/models"
 	"github.com/runatlantis/atlantis/server/core/terraform"
 	"github.com/runatlantis/atlantis/server/core/terraform/ansi"
@@ -64,6 +65,8 @@ type DefaultClient struct {
 	// overrideTF can be used to override the terraform binary during testing
 	// with another binary, ex. echo.
 	overrideTF string
+	// overrideTerragrunt replaces the terragrunt binary during testing.
+	overrideTerragrunt string
 	// settings for the downloader.
 	downloadBaseURL string
 	downloadAllowed bool
@@ -412,7 +415,7 @@ func (c *DefaultClient) RunCommandWithVersion(ctx command.ProjectContext, path s
 // v, and args. It returns a printable representation of the command that will
 // be run and the actual command.
 func (c *DefaultClient) prepExecCmd(ctx command.ProjectContext, d terraform.Distribution, v *version.Version, workspace string, path string, args []string, customEnvVars map[string]string) (string, *exec.Cmd, error) {
-	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs)
+	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
 	if err != nil {
 		return "", nil, err
 	}
@@ -428,7 +431,7 @@ func (c *DefaultClient) prepExecCmd(ctx command.ProjectContext, d terraform.Dist
 // environment variable expansion, because extra_args is documented to be able
 // to refer to $WORKSPACE and friends, but that expansion is performed here
 // rather than by a shell, so it neither word splits nor globs.
-func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribution, v *version.Version, workspace string, path string, args []string, customEnvVars map[string]string, expandable []string, literal []string) ([]string, string, []string, error) {
+func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribution, v *version.Version, workspace string, path string, args []string, customEnvVars map[string]string, expandable []string, literal []string, tool string) ([]string, string, []string, error) {
 
 	if v == nil {
 		v = c.defaultVersion
@@ -460,6 +463,18 @@ func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribut
 	if c.usePluginCache {
 		envVars = append(envVars, fmt.Sprintf("TF_PLUGIN_CACHE_DIR=%s", c.terraformPluginCacheDir))
 	}
+	// Terragrunt runs the same command, pointed at the binary resolved above
+	// so the project's distribution and version still apply. Its settings go
+	// before the process and project env, which can override them.
+	command := []string{binPath}
+	if tool == valid.ToolTerragrunt {
+		tg, err := c.terragruntPath()
+		if err != nil {
+			return nil, "", nil, err
+		}
+		envVars = append(envVars, terragruntEnv(binPath)...)
+		command = terragruntCommand(tg)
+	}
 	// Append current Atlantis process's environment variables, ex.
 	// AWS_ACCESS_KEY.
 	envVars = append(envVars, os.Environ()...)
@@ -470,8 +485,8 @@ func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribut
 		envVars = append(envVars, fmt.Sprintf("%s=%s", key, val))
 	}
 
-	argv := make([]string, 0, len(args)+1)
-	argv = append(argv, binPath)
+	argv := make([]string, 0, len(command)+len(args))
+	argv = append(argv, command...)
 	expand := envLookup(envVars)
 	mayExpand := expansionSet(expandable, literal)
 	for _, arg := range args {
@@ -485,7 +500,7 @@ func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribut
 	// The display string keeps variable references unexpanded. It ends up in
 	// logs and in the error comments Atlantis posts on pull requests, and an
 	// extra_args entry may well reference a variable holding a credential.
-	display := displayCmd(append([]string{binPath}, args...))
+	display := displayCmd(append(command, args...))
 
 	return argv, display, envVars, nil
 }
@@ -547,7 +562,7 @@ func (c *DefaultClient) effectiveDistribution(d terraform.Distribution) terrafor
 // If any error is passed on the out channel, there will be no
 // further output (so callers are free to exit).
 func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string, args []string, customEnvVars map[string]string, d terraform.Distribution, v *version.Version, workspace string) (chan<- string, <-chan models.Line) {
-	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs)
+	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
 	if err != nil {
 		// The signature of `RunCommandAsync` doesn't provide for returning an immediate error, only one
 		// once reading the output. Since we won't be spawning a process, simulate that by sending the

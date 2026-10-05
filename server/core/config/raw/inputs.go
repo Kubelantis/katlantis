@@ -95,3 +95,12 @@ func (i *Inputs) ToValid() *valid.Inputs {
 		ExtraArgs:     i.ExtraArgs,
 	}
 }
+
+// toolValid validates a *string tool value.
+func toolValid(value any) error {
+	t, _ := value.(*string)
+	if t == nil || slices.Contains(valid.Tools, *t) {
+		return nil
+	}
+	return fmt.Errorf("%q is not a supported tool; use one of %s", *t, strings.Join(valid.Tools, ", "))
+}

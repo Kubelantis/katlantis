@@ -14,6 +14,8 @@ ARG DEFAULT_TERRAFORM_VERSION=${TERRAFORM_1_16_VERSION}
 ARG DEFAULT_OPENTOFU_VERSION=1.12.6
 # renovate: datasource=github-releases depName=open-policy-agent/conftest
 ARG DEFAULT_CONFTEST_VERSION=0.70.0
+# renovate: datasource=github-releases depName=gruntwork-io/terragrunt
+ARG TERRAGRUNT_VERSION=1.1.6
 
 # Stage 1: build artifact and download deps
 
@@ -126,6 +128,23 @@ RUN AVAILABLE_CONFTEST_VERSIONS=${DEFAULT_CONFTEST_VERSION} && \
         rm checksums.txt; \
     done
 
+# install terragrunt, used by projects with `tool: terragrunt`. There is no
+# armv7 build, so that image ships without it.
+ARG TERRAGRUNT_VERSION
+RUN mkdir -p /opt/terragrunt/bin && \
+    case ${TARGETPLATFORM} in \
+        "linux/amd64") TG_ARCH=amd64 ;; \
+        "linux/arm64") TG_ARCH=arm64 ;; \
+        *) TG_ARCH="" ;; \
+    esac && \
+    if [ -n "${TG_ARCH}" ]; then \
+        curl -LOs "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${TG_ARCH}" && \
+        curl -LOs "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/SHA256SUMS" && \
+        grep " terragrunt_linux_${TG_ARCH}$" SHA256SUMS | sha256sum -c && \
+        install -m 0755 "terragrunt_linux_${TG_ARCH}" /opt/terragrunt/bin/terragrunt && \
+        rm "terragrunt_linux_${TG_ARCH}" SHA256SUMS; \
+    fi
+
 # install git-lfs
 # renovate: datasource=github-releases depName=git-lfs/git-lfs
 ENV GIT_LFS_VERSION=3.8.0
@@ -205,6 +224,7 @@ COPY --from=builder /app/atlantis /usr/local/bin/atlantis
 # copy dependencies
 COPY --from=deps /usr/local/bin/conftest /usr/local/bin/conftest
 COPY --from=deps /usr/bin/git-lfs /usr/bin/git-lfs
+COPY --from=deps /opt/terragrunt/bin/ /usr/local/bin/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # renovate: datasource=apk depName=ca-certificates
@@ -304,6 +324,7 @@ COPY --from=builder /app/atlantis /usr/local/bin/atlantis
 # copy dependencies
 COPY --from=deps /usr/local/bin/conftest /usr/local/bin/conftest
 COPY --from=deps /usr/bin/git-lfs /usr/bin/git-lfs
+COPY --from=deps /opt/terragrunt/bin/ /usr/local/bin/
 # copy docker-entrypoint.sh
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
