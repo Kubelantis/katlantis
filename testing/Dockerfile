@@ -44,6 +44,21 @@ RUN case "$(uname -m)" in x86_64|amd64) ARCH="amd64" ;; aarch64|arm64) ARCH="arm
     install -m 0755 "terragrunt_linux_${ARCH}" /usr/local/bin/terragrunt && \
     rm "terragrunt_linux_${ARCH}" SHA256SUMS
 
+# Install Node and the cdktn CLI
+# renovate: datasource=node-version depName=node
+ENV NODE_VERSION=22.23.3
+# renovate: datasource=npm depName=cdktn-cli
+ENV CDKTN_VERSION=0.24.0
+RUN case "$(uname -m)" in x86_64|amd64) ARCH="x64" ;; aarch64|arm64) ARCH="arm64" ;; *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; esac && \
+    NODE_ARCHIVE="node-v${NODE_VERSION}-linux-${ARCH}.tar.xz" && \
+    curl -LOs "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}" && \
+    curl -LOs "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" && \
+    grep " ${NODE_ARCHIVE}$" SHASUMS256.txt | sha256sum -c - && \
+    tar -C /usr/local --strip-components=1 -xJf "${NODE_ARCHIVE}" && \
+    rm "${NODE_ARCHIVE}" SHASUMS256.txt && \
+    npm install -g --no-audit --no-fund "cdktn-cli@${CDKTN_VERSION}" && \
+    npm cache clean --force
+
 RUN useradd -u 1001 -m atlantis
 
 USER atlantis

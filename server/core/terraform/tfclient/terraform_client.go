@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-config-inspect/tfconfig"
 	"github.com/mitchellh/go-homedir"
 
+	"github.com/runatlantis/atlantis/server/core/cdktn"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/runtime/models"
 	"github.com/runatlantis/atlantis/server/core/terraform"
@@ -67,6 +68,8 @@ type DefaultClient struct {
 	overrideTF string
 	// overrideTerragrunt replaces the terragrunt binary during testing.
 	overrideTerragrunt string
+	// cdktn synthesizes CDK Terrain apps; cdktn.Default when nil.
+	cdktn *cdktn.Synthesizer
 	// settings for the downloader.
 	downloadBaseURL string
 	downloadAllowed bool
@@ -415,12 +418,16 @@ func (c *DefaultClient) RunCommandWithVersion(ctx command.ProjectContext, path s
 // v, and args. It returns a printable representation of the command that will
 // be run and the actual command.
 func (c *DefaultClient) prepExecCmd(ctx command.ProjectContext, d terraform.Distribution, v *version.Version, workspace string, path string, args []string, customEnvVars map[string]string) (string, *exec.Cmd, error) {
+	dir, err := c.workingDir(ctx, path)
+	if err != nil {
+		return "", nil, err
+	}
 	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
 	if err != nil {
 		return "", nil, err
 	}
 	cmd := exec.Command(argv[0], argv[1:]...) // #nosec G204 -- argv[0] is a resolved Terraform binary path, and the arguments are passed as a vector rather than as shell source
-	cmd.Dir = path
+	cmd.Dir = dir
 	cmd.Env = envVars
 	return display, cmd, nil
 }
@@ -562,7 +569,13 @@ func (c *DefaultClient) effectiveDistribution(d terraform.Distribution) terrafor
 // If any error is passed on the out channel, there will be no
 // further output (so callers are free to exit).
 func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string, args []string, customEnvVars map[string]string, d terraform.Distribution, v *version.Version, workspace string) (chan<- string, <-chan models.Line) {
-	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
+	dir, err := c.workingDir(ctx, path)
+	var argv []string
+	var display string
+	var envVars []string
+	if err == nil {
+		argv, display, envVars, err = c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
+	}
 	if err != nil {
 		// The signature of `RunCommandAsync` doesn't provide for returning an immediate error, only one
 		// once reading the output. Since we won't be spawning a process, simulate that by sending the
@@ -577,7 +590,7 @@ func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string,
 		return inCh, outCh
 	}
 
-	runner := models.NewArgvCommandRunner(argv, display, envVars, path, !ctx.SuppressJobOutput, c.projectCmdOutputHandler)
+	runner := models.NewArgvCommandRunner(argv, display, envVars, dir, !ctx.SuppressJobOutput, c.projectCmdOutputHandler)
 	inCh, outCh := runner.RunCommandAsync(ctx)
 	return inCh, outCh
 }

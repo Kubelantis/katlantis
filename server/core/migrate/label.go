@@ -13,7 +13,7 @@ import (
 var suggestions = map[string]string{
 	"placeholder":       "Nothing: it only prints text.",
 	"terragrunt":        "Set `tool: terragrunt` on the server-side repo entry: Atlantis discovers each unit as a project with dependency-aware autoplan, replacing `run --all` and terragrunt-atlantis-config.",
-	"cdktf":             "Set `tool: cdktf` once native tool adapters land.",
+	"cdktf":             "CDK for Terraform is archived: move to CDK Terrain and set `tool: cdktn`, which synthesizes the app and makes each stack a project; or run `cdktf synth --hcl` once and commit the Terraform files.",
 	"policy_scanner":    "Write the checks as Conftest policies for the built-in policy_check, or run the scanner in CI.",
 	"cost_estimation":   "Run cost estimation in CI, for example the Infracost GitHub Action.",
 	"credentials":       "Use workload identity on the Atlantis ServiceAccount (for example IRSA) or fixed values in inputs.env.",
@@ -25,7 +25,7 @@ var suggestions = map[string]string{
 var categoryCriteria = map[string]string{
 	"placeholder":       "It is a run step whose output nothing uses: it only prints text. The command of an env step is never a placeholder, because its output becomes an environment variable for the other steps.",
 	"terragrunt":        "It runs Terragrunt or a Terragrunt helper such as terragrunt-atlantis-config.",
-	"cdktf":             "It runs CDK for Terraform, such as cdktf get or cdktf synth, or installs its dependencies.",
+	"cdktf":             "It runs CDK for Terraform or CDK Terrain, such as cdktf or cdktn get or synth, or installs their dependencies.",
 	"policy_scanner":    "It runs a policy, security or compliance scanner other than the built-in Conftest step, such as Checkov, tfsec, Trivy or Terrascan, or a script that checks policies.",
 	"cost_estimation":   "It runs a cost estimation tool such as Infracost.",
 	"credentials":       "It fetches or configures credentials, tokens or cloud sessions.",

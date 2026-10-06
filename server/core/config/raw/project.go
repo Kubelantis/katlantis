@@ -69,6 +69,7 @@ type Project struct {
 	SilencePRComments         []string   `yaml:"silence_pr_comments,omitempty"`
 	Inputs                    *Inputs    `yaml:"inputs,omitempty"`
 	Tool                      *string    `yaml:"tool,omitempty"`
+	Stack                     *string    `yaml:"stack,omitempty"`
 }
 
 // IsTerraformProjectDir returns true if the directory contains files that make it look like a Terraform project
@@ -160,6 +161,7 @@ func (p Project) Validate() error {
 	return validation.ValidateStruct(&p,
 		validation.Field(&p.Inputs),
 		validation.Field(&p.Tool, validation.By(toolValid)),
+		validation.Field(&p.Stack, validation.By(stackValid)),
 		validation.Field(&p.Dir, validation.Required, validation.By(validDir)),
 		validation.Field(&p.Workspace, validation.By(validWorkspace)),
 		validation.Field(&p.PlanRequirements, validation.By(validPlanReq)),
@@ -242,6 +244,9 @@ func (p Project) ToValid() valid.Project {
 
 	v.Inputs = p.Inputs.ToValid()
 	v.Tool = p.Tool
+	if p.Stack != nil {
+		v.Stack = *p.Stack
+	}
 	if p.SilencePRComments != nil {
 		v.SilencePRComments = p.SilencePRComments
 	}

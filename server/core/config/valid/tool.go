@@ -10,7 +10,10 @@ const (
 	// ToolTerragrunt runs Terragrunt, pointed at the project's Terraform or
 	// OpenTofu binary.
 	ToolTerragrunt = "terragrunt"
+	// ToolCdktn synthesizes a CDK Terrain app and runs the project's
+	// Terraform or OpenTofu binary in the synthesized stack.
+	ToolCdktn = "cdktn"
 )
 
 // Tools lists the supported tools.
-var Tools = []string{ToolTerraform, ToolTerragrunt}
+var Tools = []string{ToolTerraform, ToolTerragrunt, ToolCdktn}

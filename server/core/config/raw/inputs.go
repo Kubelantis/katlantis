@@ -96,6 +96,18 @@ func (i *Inputs) ToValid() *valid.Inputs {
 	}
 }
 
+var stackNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+// stackValid validates a *string CDK stack name: a stack directory under
+// the synthesized output, so no path separators.
+func stackValid(value any) error {
+	s, _ := value.(*string)
+	if s == nil || stackNameRe.MatchString(*s) {
+		return nil
+	}
+	return fmt.Errorf("%q is not a valid stack name", *s)
+}
+
 // toolValid validates a *string tool value.
 func toolValid(value any) error {
 	t, _ := value.(*string)

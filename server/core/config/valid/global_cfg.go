@@ -157,8 +157,10 @@ type MergedProjectCfg struct {
 	SilencePRComments         []string
 	// Env is set for every step of the project (from inputs).
 	Env map[string]string
-	// Tool runs the built-in steps; see ToolTerraform and ToolTerragrunt.
+	// Tool runs the built-in steps; see Tools.
 	Tool string
+	// Stack is the CDK Terrain stack, for tool cdktn.
+	Stack string
 }
 
 // WorkflowHook is a map of custom run commands to run before or after workflows.
@@ -485,6 +487,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		SilencePRComments:         silencePRComments,
 		Env:                       inputs.Env,
 		Tool:                      tool,
+		Stack:                     proj.Stack,
 	}
 }
 

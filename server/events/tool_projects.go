@@ -5,8 +5,8 @@ import (
 	"github.com/runatlantis/atlantis/server/logging"
 )
 
-// TerragruntUnitDiscoverer finds the Terragrunt units of a cloned repo and
-// returns them as projects.
-type TerragruntUnitDiscoverer interface {
+// ToolProjectDiscoverer finds the projects of a cloned repo for a tool with
+// its own project layout, such as Terragrunt units or CDK Terrain stacks.
+type ToolProjectDiscoverer interface {
 	Discover(log logging.SimpleLogging, repoDir string) ([]valid.Project, error)
 }

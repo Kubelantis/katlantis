@@ -46,3 +46,10 @@ func TestToolProjectOverrideWhenAllowed(t *testing.T) {
 	err := notAllowed.ValidateRepoCfg(valid.RepoCfg{Projects: []valid.Project{project}}, "github.com/org/repo")
 	ErrContains(t, "repo config not allowed to set 'tool' key", err)
 }
+
+func TestStackIsMerged(t *testing.T) {
+	g := cfgWithTool(nil, valid.ToolCdktn)
+	m := g.MergeProjectCfg(logging.NewNoopLogger(t), "github.com/org/repo", valid.Project{Dir: "infra", Stack: "network"}, valid.RepoCfg{})
+	Equals(t, valid.ToolCdktn, m.Tool)
+	Equals(t, "network", m.Stack)
+}

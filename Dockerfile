@@ -16,6 +16,11 @@ ARG DEFAULT_OPENTOFU_VERSION=1.12.6
 ARG DEFAULT_CONFTEST_VERSION=0.70.0
 # renovate: datasource=github-releases depName=gruntwork-io/terragrunt
 ARG TERRAGRUNT_VERSION=1.1.6
+# renovate: datasource=npm depName=cdktn-cli
+ARG CDKTN_VERSION=0.24.0
+# Node for CDK Terrain in the Debian image; Alpine uses its own nodejs package.
+# renovate: datasource=node-version depName=node
+ARG NODE_VERSION=22.23.3
 
 # Stage 1: build artifact and download deps
 
@@ -194,6 +199,31 @@ RUN ./download-release.sh \
         "${DEFAULT_OPENTOFU_VERSION}" \
         "${DEFAULT_OPENTOFU_VERSION}"
 
+# Node and the cdktn CLI for projects with `tool: cdktn`, for the full Debian
+# target. Debian's own nodejs is older than cdktn supports.
+FROM deps AS cdktn-deps
+
+ARG TARGETPLATFORM
+ARG NODE_VERSION
+ARG CDKTN_VERSION
+WORKDIR /tmp/build
+RUN case ${TARGETPLATFORM} in \
+        "linux/amd64") NODE_ARCH=x64 ;; \
+        "linux/arm64") NODE_ARCH=arm64 ;; \
+        "linux/arm/v7") NODE_ARCH=armv7l ;; \
+        *) echo "unsupported target platform: ${TARGETPLATFORM}" >&2; exit 1 ;; \
+    esac && \
+    NODE_ARCHIVE="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" && \
+    curl -LOs "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}" && \
+    curl -LOs "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" && \
+    grep " ${NODE_ARCHIVE}$" SHASUMS256.txt | sha256sum -c - && \
+    mkdir -p /opt/node && \
+    tar -C /opt/node --strip-components=1 -xJf "${NODE_ARCHIVE}" && \
+    rm "${NODE_ARCHIVE}" SHASUMS256.txt && \
+    /opt/node/bin/npm install -g --prefix /opt/node --no-audit --no-fund "cdktn-cli@${CDKTN_VERSION}" && \
+    /opt/node/bin/npm cache clean --force && \
+    /opt/node/bin/cdktn --version
+
 # Stage 2 - Alpine
 # Creating the individual distro builds using targets.
 #
@@ -309,6 +339,20 @@ FROM alpine-runtime AS alpine
 COPY --from=tf-deps /usr/local/bin/terraform/terraform* /usr/local/bin/
 COPY --from=tf-deps /usr/local/bin/tofu/tofu* /usr/local/bin/
 
+# Node and the cdktn CLI for projects with `tool: cdktn`. Not in the slim
+# target, which carries no bundled toolchains.
+ARG CDKTN_VERSION
+# renovate: datasource=apk depName=nodejs
+ENV NODEJS_VERSION="24.18.1-r0"
+# renovate: datasource=apk depName=npm
+ENV NPM_VERSION="11.12.1-r0"
+USER root
+RUN apk add --no-cache nodejs=${NODEJS_VERSION} npm=${NPM_VERSION} && \
+    npm install -g --no-audit --no-fund "cdktn-cli@${CDKTN_VERSION}" && \
+    npm cache clean --force && \
+    cdktn --version
+USER atlantis
+
 # Stage 2 - Debian
 FROM debian-base AS debian-runtime
 
@@ -373,3 +417,10 @@ FROM debian-runtime AS debian
 # after the capability strip.
 COPY --from=tf-deps /usr/local/bin/terraform/terraform* /usr/local/bin/
 COPY --from=tf-deps /usr/local/bin/tofu/tofu* /usr/local/bin/
+
+# Node and the cdktn CLI for projects with `tool: cdktn`. See the alpine
+# target.
+COPY --from=cdktn-deps /opt/node /opt/node
+USER root
+RUN ln -s /opt/node/bin/node /opt/node/bin/npm /opt/node/bin/npx /opt/node/bin/cdktn /usr/local/bin/
+USER atlantis

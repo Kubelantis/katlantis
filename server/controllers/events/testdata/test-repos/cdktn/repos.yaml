@@ -1,0 +1,6 @@
+repos:
+- id: /.*/
+  tool: cdktn
+  inputs:
+    vars:
+      env: prod

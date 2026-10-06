@@ -202,6 +202,8 @@ type Project struct {
 	Inputs *Inputs
 	// Tool overrides the server-side tool when allowed.
 	Tool *string
+	// Stack is the CDK Terrain stack the project plans, for tool cdktn.
+	Stack string
 }
 
 // GetName returns the name of the project or an empty string if there is no

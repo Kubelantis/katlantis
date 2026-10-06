@@ -302,6 +302,39 @@ locals {
 Other terragrunt-atlantis-config locals, such as `atlantis_workflow`, are ignored.
 
 
+### CDK Terrain
+
+Set `tool: cdktn` to plan and apply [CDK Terrain](https://github.com/open-constructs/cdk-terrain) apps, the community continuation of CDK for Terraform. A CDK Terrain app is a directory with a `cdktf.json`.
+
+```yaml
+repos:
+  - id: /.*/
+    tool: cdktn
+```
+
+- Before running Terraform for a project, Atlantis synthesizes its app once per commit with `cdktn synth --output cdktf.out`, then runs the built-in steps in the stack's directory under `cdktf.out`. Plan files stay in the project directory, so `inputs.vars`, `inputs.env`, `extra_args`, comment arguments, policy checks and plan stores work as they do for Terraform.
+- Relative paths in `inputs.var_files` and `inputs.backend_config` resolve from the synthesized stack directory, not the app.
+- If the app has a `package.json` and no `node_modules`, Atlantis runs `npm ci` (or `npm install` without a lock file) first, with `--ignore-scripts`. Other languages need their dependencies available in the image.
+- The `cdktn` binary and Node must be on `PATH`. The full Atlantis images include them; the `-slim` images do not.
+
+#### CDK Terrain Stack Discovery
+
+When autodiscovery is on, Atlantis finds every `cdktf.json` (outside `node_modules` and `cdktf.out`), synthesizes the app and makes each stack a project:
+
+- The project is named after the stack, prefixed with the app directory unless the app is at the repository root, and plans with `atlantis plan -p <name>`.
+- A stack autoplans when any file of its app changes, except `cdktf.out`, `node_modules` and apps nested inside it.
+- Stacks plan and apply after the stacks they depend on, from cross-stack references or `addDependency`. A cross-stack reference reads the other stack's state, so plan the dependent stack again after the first apply.
+
+To configure stacks by hand, set `stack` on a project in `atlantis.yaml`; it may be left out when the app has a single stack:
+
+```yaml
+version: 3
+projects:
+- name: prod-network
+  dir: infra
+  stack: network
+```
+
 ### Migrating Custom Workflows To Native Inputs
 
 `atlantis migrate-workflows` converts custom workflows, workflow hooks and custom policy checks into `inputs`:
@@ -621,7 +654,7 @@ If you set a workflow with the key `default`, it will override this.
 | repo_config_file | string | none | no | Repo config file path in this repo. By default, use `atlantis.yaml` which is located on repository root. When multiple atlantis servers work with the same repo, please set different file names. |
 | workflow | string | none | no | A custom workflow. |
 | inputs | [Inputs](#native-inputs) | none | no | Native inputs for the built-in steps: `var_files`, `vars`, `backend_config`, `env`, `extra_args`. |
-| tool | string | `terraform` | no | Runs the built-in steps with `terraform` or [`terragrunt`](#terragrunt). |
+| tool | string | `terraform` | no | Runs the built-in steps with `terraform`, [`terragrunt`](#terragrunt) or [`cdktn`](#cdk-terrain). |
 | plan_requirements | []string | none | no | Requirements that must be satisfied before `atlantis plan` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | apply_requirements | []string | none | no | Requirements that must be satisfied before `atlantis apply` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | import_requirements | []string | none | no | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
