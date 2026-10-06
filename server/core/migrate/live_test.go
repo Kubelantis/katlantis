@@ -24,7 +24,7 @@ func TestLiveJevLabels(t *testing.T) {
       steps:
       - run: npm i && cdktf get && cdktf synth --output ci-cdktf.out
       - run: aws sts assume-role --role-arn arn:aws:iam::123:role/deployer > /tmp/creds.json
-      - run: terragrunt plan -input=false -out $PLANFILE
+      - run: terragrunt run --all plan --queue-include-dir $REPO_REL_DIR
     policy_check:
       steps:
       - show
@@ -39,7 +39,7 @@ func TestLiveJevLabels(t *testing.T) {
 	want := map[string]string{
 		"npm i && cdktf get && cdktf synth --output ci-cdktf.out":                         "cdktf",
 		"aws sts assume-role --role-arn arn:aws:iam::123:role/deployer > /tmp/creds.json": "credentials",
-		"terragrunt plan -input=false -out $PLANFILE":                                     "terragrunt",
+		"terragrunt run --all plan --queue-include-dir $REPO_REL_DIR":                     "terragrunt",
 		"checkov -f $SHOWFILE --compact":                                                  "policy_scanner",
 	}
 	for _, n := range r.Notes {

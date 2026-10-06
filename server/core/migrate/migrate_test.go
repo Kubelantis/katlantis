@@ -167,3 +167,54 @@ func TestLabelerAnnotatesOnlyRemovedCommands(t *testing.T) {
 	report := migrate.Report(notes)
 	Assert(t, strings.Contains(report, "| repos") || strings.Contains(report, "cost_estimation"), "report:\n%s", report)
 }
+
+func TestTerragruntRunStepsBecomeToolTerragrunt(t *testing.T) {
+	src := `repos:
+- id: /.*/
+  workflow: tg
+  allowed_overrides: [workflow]
+workflows:
+  tg:
+    plan:
+      steps:
+      - run: terragrunt workspace select $WORKSPACE
+      - run: terragrunt init --non-interactive -upgrade
+      - run: terragrunt run -- plan -input=false -var-file=prod.tfvars -out $PLANFILE
+    apply:
+      steps:
+      - run: terragrunt apply $PLANFILE
+`
+	r, err := migrate.MigrateServerConfig("repos.yaml", []byte(src))
+	Ok(t, err)
+	in := r.Workflows["tg"]
+	Equals(t, "terragrunt", in.Tool)
+	Equals(t, []string{"prod.tfvars"}, in.VarFiles)
+	Equals(t, []string{"-upgrade"}, in.ExtraArgs["init"])
+	Equals(t, 0, len(notesWith(r.Notes, migrate.Removed)))
+	Equals(t, 0, len(notesWith(r.Notes, migrate.Review)))
+
+	out := string(r.Output)
+	for _, want := range []string{"tool: terragrunt", "allowed_overrides: [inputs, tool]", "var_files: [prod.tfvars]"} {
+		Assert(t, strings.Contains(out, want), "output is missing %q:\n%s", want, out)
+	}
+	_, err = (&cfg.ParserValidator{}).ParseGlobalCfg(writeTemp(t, r.Output), valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{}))
+	Ok(t, err)
+}
+
+func TestTerragruntWithPlainBuiltinsNeedsReview(t *testing.T) {
+	src := `workflows:
+  tg:
+    plan:
+      steps:
+      - init
+      - run: terragrunt plan -out $PLANFILE
+`
+	r, err := migrate.MigrateServerConfig("repos.yaml", []byte(src))
+	Ok(t, err)
+	Equals(t, "terragrunt", r.Workflows["tg"].Tool)
+	var review []string
+	for _, n := range notesWith(r.Notes, migrate.Review) {
+		review = append(review, n.Detail)
+	}
+	Assert(t, strings.Contains(strings.Join(review, "\n"), "now run through terragrunt too"), "missing review note: %v", review)
+}

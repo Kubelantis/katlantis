@@ -70,6 +70,27 @@ func convertWorkflows(file string, top *yaml.Node) (map[string]Inputs, []Note) {
 	return out, notes
 }
 
+// describe names what replaced a workflow.
+func (in Inputs) describe() string {
+	switch {
+	case in.hasInputs() && in.Tool != "":
+		return "inputs and tool: " + in.Tool
+	case in.Tool != "":
+		return "tool: " + in.Tool
+	}
+	return "inputs"
+}
+
+// usesTool reports whether any converted workflow sets a tool.
+func usesTool(workflows map[string]Inputs) bool {
+	for _, in := range workflows {
+		if in.Tool != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // MigrateServerConfig migrates a server-side repos.yaml.
 func MigrateServerConfig(file string, src []byte) (*Result, error) {
 	doc, top, err := load(src)
@@ -95,11 +116,11 @@ func MigrateServerConfig(file string, src []byte) (*Result, error) {
 				switch {
 				case !ok:
 					add(loc, Review, fmt.Sprintf("workflow %q is not defined in this file; set inputs by hand", name), "")
-				case mapGet(entry, "inputs") != nil:
+				case in.hasInputs() && mapGet(entry, "inputs") != nil:
 					add(loc, Review, fmt.Sprintf("already has inputs; workflow %q was not merged into them", name), "")
 				case !in.IsZero():
-					mapSet(entry, "inputs", in.node())
-					add(loc, Converted, fmt.Sprintf("workflow %q replaced by inputs", name), "")
+					in.applyTo(entry)
+					add(loc, Converted, fmt.Sprintf("workflow %q replaced by %s", name, in.describe()), "")
 				default:
 					add(loc, Dropped, fmt.Sprintf("workflow %q needs no inputs", name), "")
 				}
@@ -110,6 +131,9 @@ func MigrateServerConfig(file string, src []byte) (*Result, error) {
 					vals = slices.Delete(vals, j, j+1)
 					if !slices.Contains(vals, "inputs") {
 						vals = append(vals, "inputs")
+					}
+					if usesTool(r.Workflows) && !slices.Contains(vals, "tool") {
+						vals = append(vals, "tool")
 					}
 					mapSet(entry, "allowed_overrides", seqOf(vals))
 					add(loc, Converted, "allowed_overrides: workflow replaced by inputs", "")
@@ -151,7 +175,7 @@ func MigrateServerConfig(file string, src []byte) (*Result, error) {
 		}
 		entry := newMap()
 		mapSet(entry, "id", scalar("/.*/"))
-		mapSet(entry, "inputs", in.node())
+		in.applyTo(entry)
 		repos.Content = append([]*yaml.Node{entry}, repos.Content...)
 		add("repos", Converted, `workflow "default" replaced by a first catch-all entry with inputs`, "")
 	}
@@ -186,7 +210,7 @@ func MigrateRepoConfig(file string, src []byte, server map[string]Inputs) (*Resu
 				if !local {
 					in, local = server[name]
 					if local {
-						add(loc, Review, fmt.Sprintf("workflow %q is server-side; its inputs were copied here, which needs allowed_overrides: [inputs]", name))
+						add(loc, Review, fmt.Sprintf("workflow %q is server-side; its settings were copied here, which needs them in allowed_overrides (inputs, tool)", name))
 					}
 				}
 				if lost := lostSteps(r.Notes)[name]; lost > 0 && local {
@@ -195,11 +219,11 @@ func MigrateRepoConfig(file string, src []byte, server map[string]Inputs) (*Resu
 				switch {
 				case !local:
 					add(loc, Review, fmt.Sprintf("workflow %q is defined elsewhere; migrate the server config with this file, or set inputs by hand", name))
-				case mapGet(p, "inputs") != nil:
+				case in.hasInputs() && mapGet(p, "inputs") != nil:
 					add(loc, Review, fmt.Sprintf("already has inputs; workflow %q was not merged into them", name))
 				case !in.IsZero():
-					mapSet(p, "inputs", in.node())
-					add(loc, Converted, fmt.Sprintf("workflow %q replaced by inputs", name))
+					in.applyTo(p)
+					add(loc, Converted, fmt.Sprintf("workflow %q replaced by %s", name, in.describe()))
 				default:
 					add(loc, Dropped, fmt.Sprintf("workflow %q needs no inputs", name))
 				}

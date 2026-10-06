@@ -20,6 +20,7 @@ import (
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/runtime"
 	"github.com/runatlantis/atlantis/server/core/terraform/tfclient"
+	"github.com/runatlantis/atlantis/server/core/terragrunt"
 	"github.com/runatlantis/atlantis/server/logging"
 	"github.com/runatlantis/atlantis/server/metrics"
 	"github.com/runatlantis/atlantis/server/utils"
@@ -173,6 +174,7 @@ func NewProjectCommandBuilder(
 		WorkingDirLocker:         workingDirLocker,
 		GlobalCfg:                globalCfg,
 		PendingPlanFinder:        pendingPlanFinder,
+		TerragruntUnits:          terragrunt.NewDiscoverer(),
 		PlanStore:                planStore,
 		SkipCloneNoChanges:       skipCloneNoChanges,
 		EnableRegExpCmd:          EnableRegExpCmd,
@@ -278,6 +280,9 @@ type DefaultProjectCommandBuilder struct {
 	GlobalCfg valid.GlobalCfg
 	// Finds unapplied plans.
 	PendingPlanFinder *DefaultPendingPlanFinder
+	// Discovers the Terragrunt units of repos whose server-side tool is
+	// terragrunt.
+	TerragruntUnits TerragruntUnitDiscoverer
 	// Persists plan files to external storage (S3) so they survive container restarts.
 	PlanStore runtime.PlanStore
 	// Builds project command contexts for Atlantis commands.
@@ -422,7 +427,8 @@ func (p *DefaultProjectCommandBuilder) shouldSkipClone(ctx *command.Context, mod
 	// cloning to ensure all the return values are set properly with
 	// the actual clone directory.
 
-	if !p.SkipCloneNoChanges || !p.VCSClient.SupportsSingleFileDownload(ctx.Pull.BaseRepo) {
+	// Terragrunt units are only known after cloning.
+	if !p.SkipCloneNoChanges || !p.VCSClient.SupportsSingleFileDownload(ctx.Pull.BaseRepo) || p.usesTerragrunt(ctx) {
 		return false, nil
 	}
 	repoCfgFile := p.GlobalCfg.RepoConfigFile(ctx.Pull.BaseRepo.ID())
@@ -498,14 +504,48 @@ func (p *DefaultProjectCommandBuilder) parseRepoCfg(ctx *command.Context, repoDi
 	}
 	if !hasRepoCfg {
 		ctx.Log.Info("repo config file %s is absent, using global defaults", repoCfgFile)
-		return valid.RepoCfg{}, false, nil
+		repoCfg, err := p.withTerragruntUnits(ctx, repoDir, valid.RepoCfg{})
+		return repoCfg, false, err
 	}
 	repoCfg, err := p.ParserValidator.ParseRepoCfg(repoDir, p.GlobalCfg, ctx.Pull.BaseRepo.ID(), ctx.Pull.BaseBranch)
 	if err != nil {
 		return valid.RepoCfg{}, false, fmt.Errorf("parsing %s: %w", repoCfgFile, err)
 	}
 	ctx.Log.Info("successfully parsed %s file", repoCfgFile)
-	return repoCfg, true, nil
+	repoCfg, err = p.withTerragruntUnits(ctx, repoDir, repoCfg)
+	return repoCfg, true, err
+}
+
+// usesTerragrunt reports whether the repo's server-side tool is terragrunt.
+func (p *DefaultProjectCommandBuilder) usesTerragrunt(ctx *command.Context) bool {
+	return p.GlobalCfg.RepoTool(ctx.Pull.BaseRepo.ID()) == valid.ToolTerragrunt
+}
+
+// withTerragruntUnits adds a project for each Terragrunt unit that the repo
+// config does not configure already, when the repo's server-side tool is
+// terragrunt and autodiscovery is on. Terragrunt units replace the
+// directory-based autodiscovery for such repos.
+func (p *DefaultProjectCommandBuilder) withTerragruntUnits(ctx *command.Context, repoDir string, repoCfg valid.RepoCfg) (valid.RepoCfg, error) {
+	if p.TerragruntUnits == nil || !p.usesTerragrunt(ctx) || !p.autoDiscoverModeEnabled(ctx, repoCfg) {
+		return repoCfg, nil
+	}
+	units, err := p.TerragruntUnits.Discover(ctx.Log, repoDir)
+	if err != nil {
+		return repoCfg, fmt.Errorf("discovering Terragrunt units: %w", err)
+	}
+	configured := map[string]bool{}
+	for _, proj := range repoCfg.Projects {
+		configured[filepath.Clean(proj.Dir)] = true
+	}
+	projects := slices.Clone(repoCfg.Projects)
+	for _, unit := range units {
+		if configured[unit.Dir] || p.isAutoDiscoverPathIgnored(ctx, repoCfg, unit.Dir) {
+			continue
+		}
+		projects = append(projects, unit)
+	}
+	repoCfg.Projects = projects
+	return repoCfg, nil
 }
 
 // shouldIgnoreTargetedDir checks whether a targeted -d command should be
@@ -701,7 +741,7 @@ func (p *DefaultProjectCommandBuilder) getMergedProjectCfgs(ctx *command.Context
 		}
 	}
 
-	if p.autoDiscoverModeEnabled(ctx, repoCfg) {
+	if p.autoDiscoverModeEnabled(ctx, repoCfg) && !p.usesTerragrunt(ctx) {
 		ctx.Log.Info("automatic project discovery enabled. Will run automatic detection")
 
 		// build a module index for projects that are explicitly included
@@ -755,7 +795,7 @@ func (p *DefaultProjectCommandBuilder) getAllMergedProjectCfgs(ctx *command.Cont
 		configuredProjDirs[filepath.Clean(project.Dir)] = true
 	}
 
-	if !p.autoDiscoverModeEnabled(ctx, repoCfg) {
+	if !p.autoDiscoverModeEnabled(ctx, repoCfg) || p.usesTerragrunt(ctx) {
 		return mergedCfgs, nil
 	}
 
@@ -1137,7 +1177,7 @@ func (p *DefaultProjectCommandBuilder) getCfg(ctx *command.Context, projectName 
 		err = fmt.Errorf("looking for '%s' file in '%s': %w", repoCfgFile, repoDir, err)
 		return
 	}
-	if !hasRepoCfg {
+	if !hasRepoCfg && !p.usesTerragrunt(ctx) {
 		if projectName != "" {
 			err = fmt.Errorf("cannot specify a project name unless an %s file exists to configure projects", repoCfgFile)
 			return
@@ -1146,7 +1186,13 @@ func (p *DefaultProjectCommandBuilder) getCfg(ctx *command.Context, projectName 
 	}
 
 	var repoConfig valid.RepoCfg
-	repoConfig, err = p.ParserValidator.ParseRepoCfg(repoDir, p.GlobalCfg, ctx.Pull.BaseRepo.ID(), ctx.Pull.BaseBranch)
+	if hasRepoCfg {
+		repoConfig, err = p.ParserValidator.ParseRepoCfg(repoDir, p.GlobalCfg, ctx.Pull.BaseRepo.ID(), ctx.Pull.BaseBranch)
+		if err != nil {
+			return
+		}
+	}
+	repoConfig, err = p.withTerragruntUnits(ctx, repoDir, repoConfig)
 	if err != nil {
 		return
 	}

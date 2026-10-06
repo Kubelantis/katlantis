@@ -44,11 +44,28 @@ type Inputs struct {
 	BackendConfig []string
 	Env           map[string]string
 	ExtraArgs     map[string][]string
+	// Tool is "terragrunt" when the workflow ran Terragrunt. It becomes the
+	// `tool` key next to inputs, not part of them.
+	Tool string
 }
 
-// IsZero reports whether no input was produced.
+// IsZero reports whether neither inputs nor a tool were produced.
 func (in Inputs) IsZero() bool {
-	return len(in.VarFiles) == 0 && len(in.Vars) == 0 && len(in.BackendConfig) == 0 && len(in.Env) == 0 && len(in.ExtraArgs) == 0
+	return !in.hasInputs() && in.Tool == ""
+}
+
+func (in Inputs) hasInputs() bool {
+	return len(in.VarFiles) > 0 || len(in.Vars) > 0 || len(in.BackendConfig) > 0 || len(in.Env) > 0 || len(in.ExtraArgs) > 0
+}
+
+// applyTo sets the inputs and tool keys of a repo entry or project.
+func (in Inputs) applyTo(m *yaml.Node) {
+	if in.hasInputs() {
+		mapSet(m, "inputs", in.node())
+	}
+	if in.Tool != "" {
+		mapSet(m, "tool", scalar(in.Tool))
+	}
 }
 
 func (in *Inputs) addExtra(step string, args ...string) {
@@ -103,6 +120,8 @@ type workflowConverter struct {
 	// that disagree (inputs apply to plan and import alike).
 	varSource string
 	seen      map[string][]string // stage -> built-in steps it runs
+	// plainBuiltins counts built-in steps written as steps, not as commands.
+	plainBuiltins int
 }
 
 func (c *workflowConverter) note(loc string, a Action, detail string, cmd string) {
@@ -126,6 +145,7 @@ func ConvertWorkflow(file, name string, wf *yaml.Node) (Inputs, []Note) {
 		case s.Unparsable != "":
 			c.note(loc, Review, "could not read step: "+s.Unparsable, "")
 		case slices.Contains(builtinSteps, s.Kind):
+			c.plainBuiltins++
 			c.builtin(s.Stage, s.Kind, s.ExtraArgs, loc)
 		case s.Kind == "run":
 			c.run(s, loc)
@@ -136,6 +156,9 @@ func ConvertWorkflow(file, name string, wf *yaml.Node) (Inputs, []Note) {
 		}
 	}
 	c.checkStages()
+	if c.in.Tool != "" && c.plainBuiltins > 0 {
+		c.note("", Review, fmt.Sprintf("built-in steps that ran Terraform directly now run through %s too", c.in.Tool), "")
+	}
 	return c.in, c.notes
 }
 
@@ -226,8 +249,13 @@ func (c *workflowConverter) run(s Step, loc string) {
 		c.note(loc, Dropped, reason, s.Command)
 		return
 	}
-	if step, args, ok := builtinArgsFromCommand(s.Command); ok {
+	if tool, step, args, ok := builtinArgsFromCommand(s.Command); ok {
 		c.builtin(s.Stage, step, args, loc)
+		if tool != "" {
+			c.in.Tool = tool
+			c.note(loc, Converted, fmt.Sprintf("replaced by the built-in %s step with tool: %s", step, tool), s.Command)
+			return
+		}
 		c.note(loc, Converted, fmt.Sprintf("replaced by the built-in %s step", step), s.Command)
 		return
 	}

@@ -275,7 +275,32 @@ repos:
 - Terragrunt runs the Terraform or OpenTofu binary Atlantis selects for the project (`terraform_version`, `terraform_distribution`) through `TG_TF_PATH`.
 - Atlantis sets `TG_NON_INTERACTIVE=true`, `TG_TF_FORWARD_STDOUT=true`, `TG_LOG_LEVEL=error` and `TG_NO_COLOR=true` so the output in pull request comments is Terraform's own. `inputs.env` can override them.
 - The `terragrunt` binary must be on `PATH`. The Atlantis image includes it on amd64 and arm64.
-- Each project is one Terragrunt module: a directory with a `terragrunt.hcl`. `run --all` is not used.
+- Each project is one Terragrunt unit: a directory with a `terragrunt.hcl`. `run --all` is not used.
+
+#### Terragrunt Unit Discovery
+
+When the server-side `tool` of a repo is `terragrunt` and [autodiscovery](repo-level-atlantis-yaml.md#autodiscovery-config) is on (the default when `atlantis.yaml` lists no projects), Atlantis runs `terragrunt find` on each pull request and makes every unit a project. No `atlantis.yaml` or terragrunt-atlantis-config is needed.
+
+- A `terragrunt.hcl` that other units include (a parent config) is not a project.
+- A unit autoplans when a file changes in its directory, in a file it reads (included configs, `read_terragrunt_config`, its `terraform.source` module), or in any of those for a unit it depends on through `dependency` or `dependencies` blocks, directly or not.
+- Units plan and apply after the units they depend on, through [execution order groups](repo-level-atlantis-yaml.md#order-of-planning-applying). A unit planned before its dependency is applied uses the dependency's `mock_outputs`; plan it again after the apply.
+- Projects in `atlantis.yaml` keep their own settings; units in the same directory are not added again. With `autodiscover.mode: enabled`, units are added next to the configured projects. `autodiscover.ignore_paths` applies to units too.
+- Directory-based autodiscovery of `.tf` files is off for these repos.
+- If `terragrunt find` cannot read a unit's configuration it leaves out that unit's dependencies, and changes to them will not autoplan it.
+
+A unit can adjust its project with `locals` in its `terragrunt.hcl`, named as in terragrunt-atlantis-config. Values must be literals, because Atlantis reads them without evaluating the configuration:
+
+```hcl
+locals {
+  atlantis_skip               = true                       # not a project
+  atlantis_autoplan           = false                      # plan only on request
+  atlantis_terraform_version  = "1.9.8"                    # pin the version
+  extra_atlantis_dependencies = ["../../policies/*.json"]  # more paths that autoplan it, relative to the unit
+}
+```
+
+Other terragrunt-atlantis-config locals, such as `atlantis_workflow`, are ignored.
+
 
 ### Migrating Custom Workflows To Native Inputs
 

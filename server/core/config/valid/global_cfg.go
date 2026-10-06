@@ -438,7 +438,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 	// Native inputs: server-side defaults, replaced field by field by the
 	// project's inputs when the server allows it. They compile into the
 	// built-in steps, so no custom step is involved.
-	tool := g.matchingTool(repoID)
+	tool := g.RepoTool(repoID)
 	if slices.Contains(allowedOverrides, ToolKey) && proj.Tool != nil {
 		log.Debug("overriding server-defined %s with repo settings: %s", ToolKey, *proj.Tool)
 		tool = *proj.Tool
@@ -493,7 +493,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repoRelDir string, workspace string) MergedProjectCfg {
 	log.Debug("building config based on server-side config")
 	planReqs, applyReqs, importReqs, workflow, _, _, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments := g.getMatchingCfg(log, repoID)
-	tool := g.matchingTool(repoID)
+	tool := g.RepoTool(repoID)
 	inputs := g.matchingInputs(repoID)
 	workflow = inputs.Apply(workflow)
 	return MergedProjectCfg{
@@ -519,9 +519,9 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 	}
 }
 
-// matchingTool returns the tool of the last server-side repo entry that
+// RepoTool returns the tool of the last server-side repo entry that
 // matches repoID and sets one, or ToolTerraform.
-func (g GlobalCfg) matchingTool(repoID string) string {
+func (g GlobalCfg) RepoTool(repoID string) string {
 	tool := ToolTerraform
 	for _, repo := range g.Repos {
 		if repo.IDMatches(repoID) && repo.Tool != nil {

@@ -118,8 +118,8 @@ var (
 	shellMeta     = regexp.MustCompile("[|;&<>`]|\\$\\(")
 	placeholderRe = regexp.MustCompile(`^\s*(echo|printf|true|:)(\s|$)`)
 	cleanupRe     = regexp.MustCompile(`^\s*rm\s+-(rf|fr|r)\s+\.terraform/?\s*$`)
-	workspaceRe   = regexp.MustCompile(`^\s*(terraform|tofu)\s+workspace\s+select\s+(-or-create\s+)?(\$WORKSPACE|\$\{WORKSPACE\}|"\$WORKSPACE")\s*$`)
-	builtinCmdRe  = regexp.MustCompile(`^\s*(terraform|tofu)\s+(init|plan|apply|show)(\s+.*)?$`)
+	workspaceRe   = regexp.MustCompile(`^\s*(terraform|tofu|terragrunt(\s+run\s+--)?)\s+workspace\s+select\s+(-or-create\s+)?(\$WORKSPACE|\$\{WORKSPACE\}|"\$WORKSPACE")\s*$`)
+	builtinCmdRe  = regexp.MustCompile(`^\s*(terraform|tofu|terragrunt)\s+(?:run\s+--\s+)?(init|plan|apply|show)(\s+.*)?$`)
 	varRefRe      = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
 )
 
@@ -139,11 +139,16 @@ func dropReason(cmd string) string {
 
 // builtinArgsFromCommand converts `terraform plan ...` style commands into a
 // built-in step and its extra args. Arguments the built-in step adds itself
-// are removed. ok is false when the command does more than that.
-func builtinArgsFromCommand(cmd string) (step string, args []string, ok bool) {
+// are removed. tool is "terragrunt" for `terragrunt plan ...` and
+// `terragrunt run -- plan ...`, whose own flags Atlantis sets through the
+// environment. ok is false when the command does more than that.
+func builtinArgsFromCommand(cmd string) (tool, step string, args []string, ok bool) {
 	m := builtinCmdRe.FindStringSubmatch(cmd)
 	if m == nil || shellMeta.MatchString(cmd) {
-		return "", nil, false
+		return "", "", nil, false
+	}
+	if m[1] == "terragrunt" {
+		tool = "terragrunt"
 	}
 	fields := strings.Fields(m[3])
 	for i := 0; i < len(fields); i++ {
@@ -155,13 +160,17 @@ func builtinArgsFromCommand(cmd string) (step string, args []string, ok bool) {
 		case f == "-out" && i+1 < len(fields):
 			i++
 			continue
+		case tool == "terragrunt" && strings.HasPrefix(f, "--"):
+			// A Terragrunt flag such as --non-interactive; Terraform's
+			// flags use a single dash.
+			continue
 		case strings.Contains(f, "$"):
 			// Any other variable is runtime-dependent; leave it to a human.
-			return "", nil, false
+			return "", "", nil, false
 		}
 		args = append(args, f)
 	}
-	return m[2], args, true
+	return tool, m[2], args, true
 }
 
 // templateFromEcho converts `echo "...$VAR..."` env commands into a native
