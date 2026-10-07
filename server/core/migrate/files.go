@@ -151,17 +151,8 @@ func MigrateServerConfig(file string, src []byte) (*Result, error) {
 			if mapDelete(entry, "custom_policy_check") {
 				add(loc, Removed, "custom_policy_check is not supported; policies run with the built-in conftest policy_check", "")
 			}
-			for _, key := range []string{"pre_workflow_hooks", "post_workflow_hooks"} {
-				hooks := mapGet(entry, key)
-				if hooks == nil {
-					continue
-				}
-				for k, h := range hooks.Content {
-					cmd := scalarAt(h, "run")
-					add(fmt.Sprintf("%s %s[%d]", loc, key, k), Removed, "workflow hooks are not supported", cmd)
-				}
-				mapDelete(entry, key)
-			}
+			// Workflow hooks are server-side and stay: they are where commands
+			// that must run in Atlantis's clone belong now.
 		}
 	}
 

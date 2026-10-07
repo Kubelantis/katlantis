@@ -337,7 +337,7 @@ projects:
 
 ### Migrating Custom Workflows To Native Inputs
 
-`atlantis migrate-workflows` converts custom workflows, workflow hooks and custom policy checks into `inputs`:
+`atlantis migrate-workflows` converts custom workflows and custom policy checks into `inputs`, and keeps workflow hooks:
 
 ```bash
 atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml --report migration.md
@@ -348,7 +348,7 @@ atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml
 - Built-in steps and their arguments, fixed env values, and env values built from `echo "...$BASE_REPO_NAME..."` become inputs.
 - `rm -rf .terraform`, `terraform workspace select $WORKSPACE` and `echo` placeholders are dropped: native workflows already cover them.
 - `run: terraform plan ...` style commands become the built-in step with extra arguments.
-- Other custom commands, `multienv`, workflow hooks and `custom_policy_check` are removed and listed in the report. With a TypeSafe API key (`ATLANTIS_TYPESAFE_API_KEY`), Jev labels each removed command (wrapper tool, policy scanner, cost estimation, credentials, ...) so the report says what replaces it. Labels below 0.8 confidence are marked uncertain. Labels never change the converted files.
+- Other custom commands, `multienv` and `custom_policy_check` are removed and listed in the report. Commands that must run in Atlantis's clone of the pull request, such as decrypting secrets, rendering backend files or running Infracost on the plan, belong in server-side [pre-workflow](pre-workflow-hooks.md) or [post-workflow](post-workflow-hooks.md) hooks, which the tool keeps. With a TypeSafe API key (`ATLANTIS_TYPESAFE_API_KEY`), Jev labels each removed command (wrapper tool, policy scanner, cost estimation, credentials, ...) so the report says what replaces it. Labels below 0.8 confidence are marked uncertain. Labels never change the converted files.
 - A server-side workflow named `default` becomes a first catch-all repo entry with inputs.
 - `--write` keeps the originals as `.orig`; `--strict` exits non-zero if anything was removed or needs review.
 

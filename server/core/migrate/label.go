@@ -14,12 +14,12 @@ var suggestions = map[string]string{
 	"placeholder":       "Nothing: it only prints text.",
 	"terragrunt":        "Set `tool: terragrunt` on the server-side repo entry: Atlantis discovers each unit as a project with dependency-aware autoplan, replacing `run --all` and terragrunt-atlantis-config.",
 	"cdktf":             "CDK for Terraform is archived: move to CDK Terrain and set `tool: cdktn`, which synthesizes the app and makes each stack a project; or run `cdktf synth --hcl` once and commit the Terraform files.",
-	"policy_scanner":    "Write the checks as Conftest policies for the built-in policy_check, or run the scanner in CI.",
-	"cost_estimation":   "Run cost estimation in CI, for example the Infracost GitHub Action.",
-	"credentials":       "Use workload identity on the Atlantis ServiceAccount (for example IRSA) or fixed values in inputs.env.",
-	"config_generation": "Generate the configuration in CI and commit it, or use Atlantis autodiscovery.",
-	"notification":      "Use Atlantis webhooks or CI notifications.",
-	"other_script":      "Run it in CI before or after Atlantis.",
+	"policy_scanner":    "Write the checks as Conftest policies for the built-in policy_check, or run the scanner on the plan in a server-side post_workflow_hooks entry.",
+	"cost_estimation":   "Run it on the plan in a server-side post_workflow_hooks entry (for example Infracost), or in CI.",
+	"credentials":       "Use workload identity on the Atlantis ServiceAccount (for example IRSA) or fixed values in inputs.env. To prepare files in the clone before plan (decrypt secrets, write .terraformrc), use a server-side pre_workflow_hooks entry.",
+	"config_generation": "Use autodiscovery or `tool` project discovery. To generate files in the clone before plan (for example backend.tf from templates), use a server-side pre_workflow_hooks entry.",
+	"notification":      "Use Atlantis webhooks or a server-side post_workflow_hooks entry.",
+	"other_script":      "Run it in CI before or after Atlantis. Commands that must run in Atlantis's clone of the pull request go in a server-side pre_workflow_hooks or post_workflow_hooks entry, which runs once per command at the repository root.",
 }
 
 var categoryCriteria = map[string]string{

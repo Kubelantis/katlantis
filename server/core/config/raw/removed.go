@@ -47,7 +47,7 @@ func removedKeys(keys map[string]Removed) error {
 
 // What replaced each removed key.
 var removedReplacement = map[string]string{
-	"workflows":              "use native inputs (`inputs`) and `tool` instead of custom workflows",
+	"workflows":              "use native inputs (`inputs`) and `tool` instead of custom workflows; commands that must run in Atlantis's clone go in server-side pre_workflow_hooks or post_workflow_hooks",
 	"workflow":               "use native inputs (`inputs`) and `tool` instead of selecting a workflow",
 	"allowed_workflows":      "custom workflows no longer exist; use `allowed_overrides: [inputs]`",
 	"allow_custom_workflows": "custom workflows no longer exist; use `allowed_overrides: [inputs]`",

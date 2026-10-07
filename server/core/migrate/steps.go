@@ -1,5 +1,6 @@
-// Package migrate converts Atlantis custom workflows, workflow hooks and
-// custom policy checks into katlantis native configuration (inputs).
+// Package migrate converts Atlantis custom workflows and custom policy
+// checks into katlantis native configuration (inputs). Workflow hooks are
+// kept.
 //
 // Conversion is deterministic code. Built-in steps and their arguments,
 // fixed and templated env values, and known no-op commands are converted or

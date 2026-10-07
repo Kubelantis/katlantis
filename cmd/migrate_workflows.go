@@ -14,7 +14,7 @@ import (
 	"github.com/runatlantis/atlantis/server/core/typesafe"
 )
 
-// MigrateWorkflowsCmd converts custom workflows, workflow hooks and custom
+// MigrateWorkflowsCmd converts custom workflows and custom
 // policy checks into native inputs.
 type MigrateWorkflowsCmd struct {
 	Stdout, Stderr io.Writer
@@ -31,12 +31,14 @@ var errNeedsAttention = errors.New("some behaviour was removed or needs review; 
 func (m *MigrateWorkflowsCmd) Init() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "migrate-workflows",
-		Short: "Convert custom workflows, hooks and custom policy checks into native inputs",
+		Short: "Convert custom workflows and custom policy checks into native inputs",
 		Long: `Converts a server-side repos.yaml and/or a repo-level atlantis.yaml.
 
 Built-in steps and their arguments, fixed and templated env values, and known
-no-op commands are converted by rules. Other custom commands, multienv steps,
-workflow hooks and custom policy checks are removed and listed in the report.
+no-op commands are converted by rules. Other custom commands, multienv steps
+and custom policy checks are removed and listed in the report. Server-side
+workflow hooks are kept: commands that must run in Atlantis's clone of the
+pull request belong there.
 With a TypeSafe API key, Jev labels each removed command (wrapper tool, policy
 scanner, cost estimation, ...) so the report says what replaces it; the label
 never changes the converted files.

@@ -64,16 +64,19 @@ func TestMigrateRepoConfigTfvarsFixture(t *testing.T) {
 	Equals(t, []string{"init:-reconfigure -backend-config=staging.backend.tfvars", "plan:-var-file=staging.tfvars"}, args)
 }
 
-// Server-side workflows, hooks and override keys are migrated.
+// Server-side workflows and override keys are migrated; hooks are kept.
 func TestMigrateServerConfigFixture(t *testing.T) {
 	r, err := migrate.MigrateServerConfig("repos.yaml", read(t, "server-side-cfg/repos.yaml"))
 	Ok(t, err)
 	out := string(r.Output)
-	for _, gone := range []string{"workflows:", "workflow: custom", "pre_workflow_hooks", "post_workflow_hooks"} {
+	for _, gone := range []string{"workflows:", "workflow: custom"} {
 		Assert(t, !strings.Contains(out, gone), "%q must be gone:\n%s", gone, out)
 	}
+	for _, kept := range []string{"pre_workflow_hooks", "post_workflow_hooks"} {
+		Assert(t, strings.Contains(out, kept), "%q must be kept:\n%s", kept, out)
+	}
 	Assert(t, strings.Contains(out, "allowed_overrides: [inputs]"), "override not converted:\n%s", out)
-	Equals(t, 2, len(notesWith(r.Notes, migrate.Removed))) // the two hooks
+	Equals(t, 0, len(notesWith(r.Notes, migrate.Removed)))
 	pv := &cfg.ParserValidator{}
 	_, err = pv.ParseGlobalCfg(writeTemp(t, r.Output), valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{}))
 	Ok(t, err)

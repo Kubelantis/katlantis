@@ -19,7 +19,7 @@ func TestMigrateWorkflowsWritesFilesAndReport(t *testing.T) {
 - id: /.*/
   workflow: custom
   post_workflow_hooks:
-  - run: infracost breakdown --path .
+  - run: notify.sh
 workflows:
   custom:
     plan:
@@ -27,6 +27,7 @@ workflows:
       - init
       - plan:
           extra_args: [-var-file=prod.tfvars]
+      - run: infracost breakdown --path .
 `), 0o600))
 	report := filepath.Join(dir, "report.md")
 
@@ -38,6 +39,7 @@ workflows:
 	migrated, err := os.ReadFile(repos)
 	Ok(t, err)
 	Assert(t, strings.Contains(string(migrated), "var_files: [prod.tfvars]"), "not migrated:\n%s", migrated)
+	Assert(t, strings.Contains(string(migrated), "run: notify.sh"), "workflow hooks must be kept:\n%s", migrated)
 	_, err = os.Stat(repos + ".orig")
 	Ok(t, err)
 	r, err := os.ReadFile(report)
