@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -56,50 +55,6 @@ type LockURLGenerator interface {
 type StepRunner interface {
 	// Run runs the step.
 	Run(ctx command.ProjectContext, extraArgs []string, path string, envs map[string]string) (string, error)
-}
-
-//go:generate go tool pegomock generate --package mocks -o mocks/mock_custom_step_runner.go CustomStepRunner
-
-// CustomStepRunner runs custom run steps.
-type CustomStepRunner interface {
-	// Run cmd in path.
-	Run(
-		ctx command.ProjectContext,
-		shell *valid.CommandShell,
-		cmd string,
-		path string,
-		envs map[string]string,
-		streamOutput bool,
-		postProcessOutput []valid.PostProcessRunOutputOption,
-		postProcessFilterRegexes []*regexp.Regexp,
-	) (string, error)
-}
-
-//go:generate go tool pegomock generate --package mocks -o mocks/mock_env_step_runner.go EnvStepRunner
-
-// EnvStepRunner runs env steps.
-type EnvStepRunner interface {
-	Run(
-		ctx command.ProjectContext,
-		shell *valid.CommandShell,
-		cmd string,
-		value string,
-		path string,
-		envs map[string]string,
-	) (string, error)
-}
-
-// MultiEnvStepRunner runs multienv steps.
-type MultiEnvStepRunner interface {
-	// Run cmd in path.
-	Run(
-		ctx command.ProjectContext,
-		shell *valid.CommandShell,
-		cmd string,
-		path string,
-		envs map[string]string,
-		postProcessOutput []valid.PostProcessRunOutputOption,
-	) (string, error)
 }
 
 //go:generate go tool pegomock generate --package mocks -o mocks/mock_webhooks_sender.go WebhooksSender
@@ -344,9 +299,6 @@ type DefaultProjectCommandRunner struct {
 	VersionStepRunner         StepRunner
 	ImportStepRunner          StepRunner
 	StateRmStepRunner         StepRunner
-	RunStepRunner             CustomStepRunner
-	EnvStepRunner             EnvStepRunner
-	MultiEnvStepRunner        MultiEnvStepRunner
 	PullApprovedChecker       runtime.PullApprovedChecker
 	WorkingDir                WorkingDir
 	Webhooks                  WebhooksSender
@@ -631,96 +583,22 @@ func (p *DefaultProjectCommandRunner) doPolicyCheck(ctx command.ProjectContext) 
 		}
 	}
 
-	// Separate output from custom run steps
-	var index int
-	var preConftestOutput []string
-	var postConftestOutput []string
+	// The Conftest JSON result is one of the outputs; keep what came before
+	// and after it (for example the output of the show step) for the comment.
 	// Initialize policySetResults as empty slice instead of nil to prevent
 	// "unable to unmarshal conftest output" error when outputs array is empty
 	policySetResults := []models.PolicySetResult{}
-
-	inputPolicySets := ctx.PolicySets.PolicySets
-	for index, output := range outputs {
-		if !ctx.CustomPolicyCheck {
-			err = json.Unmarshal([]byte(strings.Join([]string{output}, "\n")), &policySetResults)
-			if err == nil {
-				break
-			}
-			preConftestOutput = append(preConftestOutput, output)
-		} else {
-			// Using a policy tool other than Conftest, manually building result struct.
-			// Excess outputs (no matching configured policy set) fall back to the
-			// top-level policies block for both regex and approve count.
-			policySetName := "Custom"
-			policyItemRegex := ctx.PolicySets.PolicyItemRegex
-			approveCount := ctx.PolicySets.ApproveCount
-			if approveCount <= 0 {
-				approveCount = 1
-			}
-			if index < len(inputPolicySets) {
-				policySetName = inputPolicySets[index].Name
-				policyItemRegex = inputPolicySets[index].PolicyItemRegex
-				approveCount = inputPolicySets[index].ApproveCount
-			}
-
-			// Handle empty output: treat as failure since it likely indicates misconfiguration
-			// Non-empty output: parse conftest-style output to determine pass/fail
-			// Check for actual failures (> 0), not just the word "fail"
-			var passed bool
-			var policyOutput string
-			if output == "" {
-				passed = false
-				policyOutput = "WARNING: Policy check produced no output. This may indicate a misconfiguration."
-			} else {
-				// Use regex to check for actual failures (> 0), not just the word "fail"
-				// Matches patterns like "1 failure", "2 failures", "10 failures", or JSON "failures": [...]
-				failureRegex := regexp.MustCompile(`([1-9][0-9]* failure|failures": \[)`)
-				hasFailures := failureRegex.MatchString(output)
-				// Also check for FAIL prefix (conftest error output)
-				hasFailPrefix := strings.HasPrefix(strings.TrimSpace(output), "FAIL")
-				passed = !hasFailures && !hasFailPrefix
-				policyOutput = output
-			}
-
-			result, regexErr := models.NewPolicySetResult(
-				policySetName,
-				policyOutput,
-				passed,
-				approveCount,
-				policyItemRegex,
-			)
-			if regexErr != nil {
-				// RegexValidator runs at config-parse time so this is in
-				// theory unreachable. Fail closed with a synthetic failing
-				// result so the project surfaces the misconfiguration rather
-				// than silently passing without this policy set.
-				ctx.Log.Err("invalid policy_item_regex for policy set %q: %v", policySetName, regexErr)
-				policySetResults = append(policySetResults, models.PolicySetResult{
-					PolicySetName:    policySetName,
-					PolicyOutput:     fmt.Sprintf("invalid policy_item_regex %q: %v", policyItemRegex, regexErr),
-					ReqApprovalCount: approveCount,
-					PolicyItemRegex:  policyItemRegex,
-				})
-				continue
-			}
-			policySetResults = append(policySetResults, *result)
+	resultIdx := -1
+	for i, output := range outputs {
+		if json.Unmarshal([]byte(output), &policySetResults) == nil {
+			resultIdx = i
+			break
 		}
 	}
-
-	// Warn if custom policy check has mismatch between configured policy sets and outputs.
-	// Note: With empty output preservation, this warning now only triggers when workflow steps
-	// are completely missing, not when a step returns empty output.
-	if ctx.CustomPolicyCheck {
-		if len(policySetResults) < len(inputPolicySets) {
-			ctx.Log.Warn("Configured %d policy sets but only received %d outputs. Policy sets without outputs: %v. Check your workflow configuration.",
-				len(inputPolicySets),
-				len(policySetResults),
-				getMissingPolicySetNames(inputPolicySets, len(policySetResults)))
-		} else if len(policySetResults) > len(inputPolicySets) {
-			ctx.Log.Warn("Received %d outputs but only %d policy sets configured. Excess outputs will use 'Custom' as name.",
-				len(policySetResults),
-				len(inputPolicySets))
-		}
+	var preConftestOutput, postConftestOutput []string
+	if resultIdx >= 0 {
+		preConftestOutput = outputs[:resultIdx]
+		postConftestOutput = outputs[resultIdx+1:]
 	}
 
 	// For policy sets with sticky approvals, see if we can carry over previous approvals.
@@ -761,24 +639,9 @@ func (p *DefaultProjectCommandRunner) doPolicyCheck(ctx command.ProjectContext) 
 		result.Approvals = status.Approvals
 	}
 
-	// Check if we have any policy check results
-	// For non-custom policy checks (conftest), empty results means JSON parsing failed
-	// For custom policy checks, empty results when policy sets are configured means the check failed
+	// Conftest should have produced JSON output.
 	if len(policySetResults) == 0 {
-		if !ctx.CustomPolicyCheck {
-			// Conftest should have produced JSON output
-			return nil, "", errors.New("unable to unmarshal conftest output")
-		} else if len(inputPolicySets) > 0 {
-			// Custom policy check with configured policy sets but no results - this is a failure
-			return nil, "", errors.New("custom policy check produced no results despite configured policy sets")
-		}
-		// Custom policy check with no configured policy sets and no results - this is OK
-	}
-
-	// For custom policy checks, all outputs are mapped to policy sets, so there's no post-conftest output.
-	// For non-custom (conftest) policy checks, capture any outputs after the JSON result.
-	if len(outputs) > 0 && !ctx.CustomPolicyCheck {
-		postConftestOutput = outputs[(index + 1):]
+		return nil, "", errors.New("unable to unmarshal conftest output")
 	}
 
 	result := &models.PolicyCheckResults{
@@ -1213,9 +1076,7 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 	for _, step := range steps {
 		out, err := p.runStep(step, ctx, absPath, envs)
 
-		// Keep all policy_check outputs for custom policy checks to maintain positional alignment with policy sets
-		// Empty outputs are still appended to prevent index mismatches
-		if out != "" || (step.StepName == "policy_check" && ctx.CustomPolicyCheck) {
+		if out != "" {
 			outputs = append(outputs, out)
 		}
 		if err != nil {
@@ -1272,27 +1133,8 @@ func (p *DefaultProjectCommandRunner) runStep(step valid.Step, ctx command.Proje
 		out, err = p.ImportStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
 	case "state_rm":
 		out, err = p.StateRmStepRunner.Run(ctx, step.ExtraArgs, absPath, envs)
-	case "run":
-		out, err = p.RunStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, !ctx.SuppressJobOutput, step.Output, step.FilterRegexes)
-	case "env":
-		out, err = p.EnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, step.EnvVarValue, absPath, envs)
-		envs[step.EnvVarName] = out
-		// We reset out to the empty string because we don't want it to
-		// be printed to the PR, it's solely to set the environment variable.
-		out = ""
-	case "multienv":
-		out, err = p.MultiEnvStepRunner.Run(ctx, step.RunShell, step.RunCommand, absPath, envs, step.Output)
 	}
 	return out, err
-}
-
-// getMissingPolicySetNames returns the names of policy sets that don't have corresponding outputs
-func getMissingPolicySetNames(policySets []valid.PolicySet, receivedCount int) []string {
-	var missing []string
-	for i := receivedCount; i < len(policySets); i++ {
-		missing = append(missing, policySets[i].Name)
-	}
-	return missing
 }
 
 // requiresManagedPlanFileForApply reports whether this apply must consume the

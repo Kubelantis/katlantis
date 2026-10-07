@@ -652,7 +652,6 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		userConfig.ToBlockedExtraArgs(),
 	)
 	defaultTfDistribution := distribution
-	terraformBinDir := binDir
 
 	var defaultTfVersion *version.Version
 	if userConfig.DefaultTFVersion != "" {
@@ -665,20 +664,12 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	if terraformClient != nil {
 		defaultTfDistribution = terraformClient.DefaultDistribution()
 		defaultTfVersion = terraformClient.DefaultVersion()
-		terraformBinDir = terraformClient.TerraformBinDir()
 	}
 
 	pendingPlanFinder := &events.DefaultPendingPlanFinder{
 		Log:               logger,
 		DataDir:           userConfig.DataDir,
 		LocalSharePlanDir: userConfig.SharePlanDir,
-	}
-	runStepRunner := &runtime.RunStepRunner{
-		TerraformExecutor:       terraformClient,
-		DefaultTFDistribution:   defaultTfDistribution,
-		DefaultTFVersion:        defaultTfVersion,
-		TerraformBinDir:         terraformBinDir,
-		ProjectCmdOutputHandler: projectCmdOutputHandler,
 	}
 	drainer := &events.Drainer{}
 	statusController := &controllers.StatusController{
@@ -824,13 +815,6 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 			CommitStatusUpdater:   commitStatusUpdater,
 			AsyncTFExec:           terraformClient,
 			PlanStore:             planStore,
-		},
-		RunStepRunner: runStepRunner,
-		EnvStepRunner: &runtime.EnvStepRunner{
-			RunStepRunner: runStepRunner,
-		},
-		MultiEnvStepRunner: &runtime.MultiEnvStepRunner{
-			RunStepRunner: runStepRunner,
 		},
 		VersionStepRunner: &runtime.VersionStepRunner{
 			TerraformExecutor:     terraformClient,

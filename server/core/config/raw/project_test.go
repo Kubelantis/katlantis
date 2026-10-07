@@ -27,7 +27,6 @@ func TestProject_UnmarshalYAML(t *testing.T) {
 			exp: raw.Project{
 				Dir:                nil,
 				Workspace:          nil,
-				Workflow:           nil,
 				TerraformVersion:   nil,
 				Autoplan:           nil,
 				PlanRequirements:   nil,
@@ -44,7 +43,6 @@ name: myname
 branch: mybranch
 dir: mydir
 workspace: workspace
-workflow: workflow
 terraform_version: v0.11.0
 autoplan:
   when_modified: []
@@ -61,7 +59,6 @@ execution_order_group: 10`,
 				Branch:           String("mybranch"),
 				Dir:              String("mydir"),
 				Workspace:        String("workspace"),
-				Workflow:         String("workflow"),
 				TerraformVersion: String("v0.11.0"),
 				Autoplan: &raw.Autoplan{
 					WhenModified: []string{},
@@ -587,7 +584,6 @@ func TestProject_ToValid(t *testing.T) {
 				Dir:              ".",
 				BranchRegex:      nil,
 				Workspace:        "default",
-				WorkflowName:     nil,
 				TerraformVersion: nil,
 				Autoplan: valid.Autoplan{
 					WhenModified: raw.DefaultAutoPlanWhenModified(),
@@ -602,7 +598,6 @@ func TestProject_ToValid(t *testing.T) {
 			input: raw.Project{
 				Dir:              String("."),
 				Workspace:        String("myworkspace"),
-				Workflow:         String("myworkflow"),
 				TerraformVersion: String("v0.11.0"),
 				Autoplan: &raw.Autoplan{
 					WhenModified: []string{"hi"},
@@ -618,7 +613,6 @@ func TestProject_ToValid(t *testing.T) {
 			exp: valid.Project{
 				Dir:              ".",
 				Workspace:        "myworkspace",
-				WorkflowName:     String("myworkflow"),
 				TerraformVersion: tfVersionPointEleven,
 				Autoplan: valid.Autoplan{
 					WhenModified: []string{"hi"},

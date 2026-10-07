@@ -4,4 +4,3 @@ projects:
   workspace: default
 - dir: .
   workspace: staging
-  workflow: staging

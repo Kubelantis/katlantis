@@ -53,17 +53,7 @@ func TestBuildProjectCmdCtx(t *testing.T) {
 		"global defaults": {
 			globalCfg: `
 repos:
-- id: /.*/
-  workflow: default
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
+- id: /.*/`,
 			repoCfg: "",
 			expCtx: command.ProjectContext{
 				Tool:                 "terraform",
@@ -103,17 +93,7 @@ workflows:
 		"global defaults with repo cfg": {
 			globalCfg: `
 repos:
-- id: /.*/
-  workflow: default
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
+- id: /.*/`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -165,19 +145,9 @@ projects:
 			globalCfg: `
 repos:
 - id: /.*/
-  workflow: default
   plan_requirements: [approved, mergeable]
   apply_requirements: [approved, mergeable]
-  import_requirements: [approved, mergeable]
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
+  import_requirements: [approved, mergeable]`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -229,27 +199,10 @@ projects:
 			globalCfg: `
 repos:
 - id: /.*/
-  workflow: default
 - id: github.com/owner/repo
-  workflow: specific
   plan_requirements: [approved]
   apply_requirements: [approved]
-  import_requirements: [approved]
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply
-  specific:
-    plan:
-      steps:
-      - plan
-    apply:
-      steps: []`,
+  import_requirements: [approved]`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -292,8 +245,8 @@ projects:
 				PolicySets:         emptyPolicySets,
 				RepoLocksMode:      valid.DefaultRepoLocksMode,
 			},
-			expPlanSteps:  []string{"plan"},
-			expApplySteps: []string{},
+			expPlanSteps:  []string{"init", "plan"},
+			expApplySteps: []string{"apply"},
 		},
 
 		// We should get an error if the repo sets an apply req when its
@@ -302,17 +255,7 @@ projects:
 			globalCfg: `
 repos:
 - id: /.*/
-  workflow: default
-  apply_requirements: [approved, mergeable]
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
+  apply_requirements: [approved, mergeable]`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -324,80 +267,15 @@ projects:
 			expErr: "repo config not allowed to set 'apply_requirements' key: server-side config needs 'allowed_overrides: [apply_requirements]'",
 		},
 
-		// We should get an error if a repo sets a workflow when it's not allowed.
-		"repo sets its own workflow": {
-			globalCfg: `
-repos:
-- id: /.*/
-  workflow: default
-  apply_requirements: [approved, mergeable]
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
-			repoCfg: `
-version: 3
-automerge: true
-projects:
-- dir: project1
-  workspace: myworkspace
-  workflow: default
-`,
-			expErr: "repo config not allowed to set 'workflow' key: server-side config needs 'allowed_overrides: [workflow]'",
-		},
-
-		// We should get an error if a repo defines a workflow when it's not
-		// allowed.
-		"repo defines new workflow": {
-			globalCfg: `
-repos:
-- id: /.*/
-  workflow: default
-  apply_requirements: [approved, mergeable]
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
-			repoCfg: `
-version: 3
-automerge: true
-projects:
-- dir: project1
-  workspace: myworkspace
-workflows:
-  new: ~
-`,
-			expErr: "repo config not allowed to define custom workflows: server-side config needs 'allow_custom_workflows: true'",
-		},
-
 		// If the repos are allowed to set everything then their config should
 		// come through.
 		"full repo permissions": {
 			globalCfg: `
 repos:
 - id: /.*/
-  workflow: default
   apply_requirements: [approved]
   import_requirements: [approved]
-  allowed_overrides: [apply_requirements, import_requirements, workflow]
-  allow_custom_workflows: true
-workflows:
-  default:
-    plan:
-      steps: []
-    apply:
-      steps: []
-`,
+  allowed_overrides: [apply_requirements, import_requirements]`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -409,17 +287,7 @@ projects:
     when_modified: [../modules/**/*.tf]
   terraform_version: v10.0
   apply_requirements: []
-  import_requirements: []
-  workflow: custom
-workflows:
-  custom:
-    plan:
-      steps:
-      - plan
-    apply:
-      steps:
-      - apply
-`,
+  import_requirements: []`,
 			expCtx: command.ProjectContext{
 				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
@@ -451,144 +319,10 @@ workflows:
 				PolicySets:         emptyPolicySets,
 				RepoLocksMode:      valid.DefaultRepoLocksMode,
 			},
-			expPlanSteps:  []string{"plan"},
+			expPlanSteps:  []string{"init", "plan"},
 			expApplySteps: []string{"apply"},
 		},
 
-		// Repos can choose server-side workflows.
-		"repos choose server-side workflow": {
-			globalCfg: `
-repos:
-- id: /.*/
-  workflow: default
-  allowed_overrides: [workflow]
-workflows:
-  default:
-    plan:
-      steps: []
-    apply:
-      steps: []
-  custom:
-    plan:
-      steps: [plan]
-    apply:
-      steps: [apply]
-`,
-			repoCfg: `
-version: 3
-automerge: true
-projects:
-- dir: project1
-  workspace: myworkspace
-  autoplan:
-    enabled: true
-    when_modified: [../modules/**/*.tf]
-  terraform_version: v10.0
-  workflow: custom
-`,
-			expCtx: command.ProjectContext{
-				Tool:                 "terraform",
-				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
-				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
-				BaseRepo:             baseRepo,
-				CommentArgs:          []string{"flag"},
-				EscapedCommentArgs:   []string{`\f\l\a\g`},
-				AutomergeEnabled:     true,
-				AutoplanEnabled:      true,
-				AutoplanWhenModified: []string{"../modules/**/*.tf"},
-				HeadRepo:             models.Repo{},
-				Log:                  logger,
-				Scope:                statsScope,
-				PullReqStatus: models.PullReqStatus{
-					MergeableStatus: models.MergeableStatus{IsMergeable: true},
-				},
-				Pull:               pull,
-				ProjectName:        "",
-				PlanRequirements:   []string{},
-				ApplyRequirements:  []string{},
-				ImportRequirements: []string{},
-				RepoConfigVersion:  3,
-				RePlanCmd:          "atlantis plan -d project1 -w myworkspace -- flag",
-				RepoRelDir:         "project1",
-				TerraformVersion:   mustVersion("10.0"),
-				User:               models.User{},
-				Verbose:            true,
-				Workspace:          "myworkspace",
-				PolicySets:         emptyPolicySets,
-				RepoLocksMode:      valid.DefaultRepoLocksMode,
-			},
-			expPlanSteps:  []string{"plan"},
-			expApplySteps: []string{"apply"},
-		},
-
-		// Repo-side workflows with the same name override server-side if
-		// allowed.
-		"repo-side workflow override": {
-			globalCfg: `
-repos:
-- id: /.*/
-  workflow: custom
-  allowed_overrides: [workflow]
-  allow_custom_workflows: true
-workflows:
-  custom:
-    plan:
-      steps: [plan]
-    apply:
-      steps: [apply]
-`,
-			repoCfg: `
-version: 3
-automerge: true
-projects:
-- dir: project1
-  workspace: myworkspace
-  autoplan:
-    enabled: true
-    when_modified: [../modules/**/*.tf]
-  terraform_version: v10.0
-  workflow: custom
-workflows:
-  custom:
-    plan:
-      steps: []
-    apply:
-      steps: []
-`,
-			expCtx: command.ProjectContext{
-				Tool:                 "terraform",
-				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
-				ApprovePoliciesCmd:   "atlantis approve_policies -d project1 -w myworkspace",
-				BaseRepo:             baseRepo,
-				CommentArgs:          []string{"flag"},
-				EscapedCommentArgs:   []string{`\f\l\a\g`},
-				AutomergeEnabled:     true,
-				AutoplanEnabled:      true,
-				AutoplanWhenModified: []string{"../modules/**/*.tf"},
-				HeadRepo:             models.Repo{},
-				Log:                  logger,
-				Scope:                statsScope,
-				PullReqStatus: models.PullReqStatus{
-					MergeableStatus: models.MergeableStatus{IsMergeable: true},
-				},
-				Pull:               pull,
-				ProjectName:        "",
-				PlanRequirements:   []string{},
-				ApplyRequirements:  []string{},
-				ImportRequirements: []string{},
-				RepoConfigVersion:  3,
-				RePlanCmd:          "atlantis plan -d project1 -w myworkspace -- flag",
-				RepoRelDir:         "project1",
-				TerraformVersion:   mustVersion("10.0"),
-				User:               models.User{},
-				Verbose:            true,
-				Workspace:          "myworkspace",
-				PolicySets:         emptyPolicySets,
-				RepoLocksMode:      valid.DefaultRepoLocksMode,
-			},
-			expPlanSteps:  []string{},
-			expApplySteps: []string{},
-		},
 		// Test that if we leave keys undefined, that they don't override.
 		"cascading matches": {
 			globalCfg: `
@@ -597,13 +331,7 @@ repos:
   plan_requirements: [approved]
   apply_requirements: [approved]
   import_requirements: [approved]
-- id: github.com/owner/repo
-  workflow: custom
-workflows:
-  custom:
-    plan:
-      steps: [plan]
-`,
+- id: github.com/owner/repo`,
 			repoCfg: `
 version: 3
 projects:
@@ -640,7 +368,7 @@ projects:
 				PolicySets:         emptyPolicySets,
 				RepoLocksMode:      valid.DefaultRepoLocksMode,
 			},
-			expPlanSteps:  []string{"plan"},
+			expPlanSteps:  []string{"init", "plan"},
 			expApplySteps: []string{"apply"},
 		},
 	}
@@ -796,17 +524,7 @@ func TestBuildProjectCmdCtx_WithRegExpCmdEnabled(t *testing.T) {
 		"global defaults with repo cfg": {
 			globalCfg: `
 repos:
-- id: /.*/
-  workflow: default
-workflows:
-  default:
-    plan:
-      steps:
-      - init
-      - plan
-    apply:
-      steps:
-      - apply`,
+- id: /.*/`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -1063,15 +781,8 @@ repos:
 			globalCfg: `
 repos:
 - id: /.*/
-  workflow: default
   apply_requirements: [approved]
-  allowed_overrides: [apply_requirements, workflow]
-  allow_custom_workflows: true
-workflows:
-  default:
-    policy_check:
-      steps: []
-`,
+  allowed_overrides: [apply_requirements]`,
 			repoCfg: `
 version: 3
 automerge: true
@@ -1082,14 +793,7 @@ projects:
     enabled: true
     when_modified: [../modules/**/*.tf]
   terraform_version: v10.0
-  apply_requirements: []
-  workflow: custom
-workflows:
-  custom:
-    policy_check:
-      steps:
-      - policy_check
-`,
+  apply_requirements: []`,
 			expCtx: command.ProjectContext{
 				Tool:                 "terraform",
 				ApplyCmd:             "atlantis apply -d project1 -w myworkspace",
@@ -1122,7 +826,7 @@ workflows:
 				RepoLocksMode:      valid.DefaultRepoLocksMode,
 				PolicySetTarget:    "",
 			},
-			expPolicyCheckSteps: []string{"policy_check"},
+			expPolicyCheckSteps: []string{"show", "policy_check"},
 		},
 	}
 
@@ -1451,7 +1155,7 @@ repos:
   autodiscover:
     mode: enabled
 - id: /.*/
-  allowed_overrides: [workflow]
+  allowed_overrides: []
 `,
 			repoCfg: `
 version: 3

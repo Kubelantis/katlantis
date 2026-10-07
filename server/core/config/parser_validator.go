@@ -11,11 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	validation "github.com/go-ozzo/ozzo-validation"
-	shlex "github.com/google/shlex"
 
 	"github.com/runatlantis/atlantis/server/core/config/raw"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
@@ -123,13 +121,8 @@ func (p *ParserValidator) parseRawRepoCfg(rawConfig raw.RepoCfg, globalCfg valid
 	if err := p.validateProjectNames(validConfig); err != nil {
 		return valid.RepoCfg{}, err
 	}
-	if validConfig.Version == 2 {
-		// The only difference between v2 and v3 is how we parse custom run
-		// commands.
-		if err := p.applyLegacyShellParsing(&validConfig); err != nil {
-			return validConfig, err
-		}
-	}
+	// Versions 2 and 3 differed only in how custom run commands were parsed,
+	// so both are read the same way now.
 
 	err := globalCfg.ValidateRepoCfg(validConfig, repoID)
 	return validConfig, err
@@ -254,39 +247,6 @@ func (p *ParserValidator) validateProjectNames(config valid.RepoCfg) error {
 		dirWorkspaceToNames[key] = append(dirWorkspaceToNames[key], name)
 	}
 
-	return nil
-}
-
-// applyLegacyShellParsing changes any custom run commands in cfg to use the old
-// parsing method with shlex.Split().
-func (p *ParserValidator) applyLegacyShellParsing(cfg *valid.RepoCfg) error {
-	legacyParseF := func(s *valid.Step) error {
-		if s.StepName == "run" {
-			split, err := shlex.Split(s.RunCommand)
-			if err != nil {
-				return fmt.Errorf("unable to parse %q: %w", s.RunCommand, err)
-			}
-			s.RunCommand = strings.Join(split, " ")
-		}
-		return nil
-	}
-
-	for k := range cfg.Workflows {
-		w := cfg.Workflows[k]
-		for i := range w.Plan.Steps {
-			s := &w.Plan.Steps[i]
-			if err := legacyParseF(s); err != nil {
-				return err
-			}
-		}
-		for i := range w.Apply.Steps {
-			s := &w.Apply.Steps[i]
-			if err := legacyParseF(s); err != nil {
-				return err
-			}
-		}
-		cfg.Workflows[k] = w
-	}
 	return nil
 }
 

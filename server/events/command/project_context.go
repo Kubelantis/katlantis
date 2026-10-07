@@ -177,9 +177,7 @@ type ProjectContext struct {
 	ExecutionOrderGroup int
 	// If plans/applies should be aborted if any prior plan/apply fails
 	AbortOnExecutionOrderFail bool
-	// Allows custom policy check tools outside of Conftest to run in checks
-	CustomPolicyCheck bool
-	SilencePRComments []string
+	SilencePRComments         []string
 
 	// TeamAllowlistChecker is used to check authorization on a project-level
 	TeamAllowlistChecker TeamAllowlistChecker

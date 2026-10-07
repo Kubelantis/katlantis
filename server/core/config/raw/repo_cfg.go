@@ -18,20 +18,20 @@ const DefaultAbortOnExecutionOrderFail = false
 
 // RepoCfg is the raw schema for repo-level atlantis.yaml config.
 type RepoCfg struct {
-	Version                   *int                `yaml:"version,omitempty"`
-	Projects                  []Project           `yaml:"projects,omitempty"`
-	Workflows                 map[string]Workflow `yaml:"workflows,omitempty"`
-	PolicySets                PolicySets          `yaml:"policies,omitempty"`
-	AutoDiscover              *AutoDiscover       `yaml:"autodiscover,omitempty"`
-	Automerge                 *bool               `yaml:"automerge,omitempty"`
-	ParallelApply             *bool               `yaml:"parallel_apply,omitempty"`
-	ParallelPlan              *bool               `yaml:"parallel_plan,omitempty"`
-	DeleteSourceBranchOnMerge *bool               `yaml:"delete_source_branch_on_merge,omitempty"`
-	EmojiReaction             *string             `yaml:"emoji_reaction,omitempty"`
-	AllowedRegexpPrefixes     []string            `yaml:"allowed_regexp_prefixes,omitempty"`
-	AbortOnExecutionOrderFail *bool               `yaml:"abort_on_execution_order_fail,omitempty"`
-	RepoLocks                 *RepoLocks          `yaml:"repo_locks,omitempty"`
-	SilencePRComments         []string            `yaml:"silence_pr_comments,omitempty"`
+	Version                   *int          `yaml:"version,omitempty"`
+	Projects                  []Project     `yaml:"projects,omitempty"`
+	Workflows                 Removed       `yaml:"workflows,omitempty"`
+	PolicySets                PolicySets    `yaml:"policies,omitempty"`
+	AutoDiscover              *AutoDiscover `yaml:"autodiscover,omitempty"`
+	Automerge                 *bool         `yaml:"automerge,omitempty"`
+	ParallelApply             *bool         `yaml:"parallel_apply,omitempty"`
+	ParallelPlan              *bool         `yaml:"parallel_plan,omitempty"`
+	DeleteSourceBranchOnMerge *bool         `yaml:"delete_source_branch_on_merge,omitempty"`
+	EmojiReaction             *string       `yaml:"emoji_reaction,omitempty"`
+	AllowedRegexpPrefixes     []string      `yaml:"allowed_regexp_prefixes,omitempty"`
+	AbortOnExecutionOrderFail *bool         `yaml:"abort_on_execution_order_fail,omitempty"`
+	RepoLocks                 *RepoLocks    `yaml:"repo_locks,omitempty"`
+	SilencePRComments         []string      `yaml:"silence_pr_comments,omitempty"`
 }
 
 func (r RepoCfg) Validate() error {
@@ -45,19 +45,16 @@ func (r RepoCfg) Validate() error {
 		}
 		return nil
 	}
+	if err := removedKeys(map[string]Removed{"workflows": r.Workflows}); err != nil {
+		return err
+	}
 	return validation.ValidateStruct(&r,
 		validation.Field(&r.Version, validation.By(equals2)),
 		validation.Field(&r.Projects),
-		validation.Field(&r.Workflows),
 	)
 }
 
 func (r RepoCfg) ToValid() valid.RepoCfg {
-	validWorkflows := make(map[string]valid.Workflow)
-	for k, v := range r.Workflows {
-		validWorkflows[k] = v.ToValid(k)
-	}
-
 	var validProjects []valid.Project
 	for _, p := range r.Projects {
 		validProjects = append(validProjects, p.ToValid())
@@ -89,7 +86,6 @@ func (r RepoCfg) ToValid() valid.RepoCfg {
 	return valid.RepoCfg{
 		Version:                   *r.Version,
 		Projects:                  validProjects,
-		Workflows:                 validWorkflows,
 		AutoDiscover:              autoDiscover,
 		Automerge:                 automerge,
 		ParallelApply:             parallelApply,

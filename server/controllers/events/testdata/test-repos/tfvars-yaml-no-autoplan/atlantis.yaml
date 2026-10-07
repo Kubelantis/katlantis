@@ -1,29 +1,16 @@
 version: 3
 projects:
-- dir: .
-  name: default
-  workflow: default
-  autoplan:
-    enabled: false
-- dir: .
-  workflow: staging
-  name: staging
-  autoplan:
-    enabled: false
-workflows:
-  default:
-    plan:
-      steps:
-      - run: rm -rf .terraform
-      - init:
-          extra_args: [-backend-config=default.backend.tfvars]
-      - plan:
-          extra_args: [-var-file=default.tfvars]
-  staging:
-    plan:
-      steps:
-      - run: rm -rf .terraform
-      - init:
-          extra_args: [-backend-config=staging.backend.tfvars]
-      - plan:
-          extra_args: [-var-file, staging.tfvars]
+  - dir: .
+    name: default
+    autoplan:
+      enabled: false
+    inputs:
+      var_files: [default.tfvars]
+      backend_config: [default.backend.tfvars]
+  - dir: .
+    name: staging
+    autoplan:
+      enabled: false
+    inputs:
+      var_files: [staging.tfvars]
+      backend_config: [staging.backend.tfvars]

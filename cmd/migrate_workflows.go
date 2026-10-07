@@ -53,7 +53,9 @@ Without --write the migrated files are printed to stdout.`,
 	f.BoolVar(&m.write, "write", false, "Overwrite the files in place (the originals are kept with a .orig suffix).")
 	f.StringVar(&m.reportPath, "report", "", "Write the Markdown report to this file instead of stderr.")
 	f.BoolVar(&m.strict, "strict", false, "Exit non-zero when behaviour was removed or needs review.")
-	f.StringVar(&m.typesafeKey, "typesafe-api-key", cmpOr(os.Getenv("ATLANTIS_TYPESAFE_API_KEY"), os.Getenv("TYPESAFE_API_KEY")), "TypeSafe API key for labelling removed commands. Defaults to $ATLANTIS_TYPESAFE_API_KEY, then $TYPESAFE_API_KEY.")
+	// The environment is read when the command runs, not as the flag's
+	// default, so --help never prints the key.
+	f.StringVar(&m.typesafeKey, "typesafe-api-key", "", "TypeSafe API key for labelling removed commands. Defaults to $ATLANTIS_TYPESAFE_API_KEY, then $TYPESAFE_API_KEY.")
 	f.StringVar(&m.typesafeURL, "typesafe-api-url", "https://api.typesafe.ai", "TypeSafe API base URL.")
 	f.StringVar(&m.model, "typesafe-model", "jev-1.13.0", "TypeSafe model.")
 	return c
@@ -104,6 +106,9 @@ func (m *MigrateWorkflowsCmd) run(ctx context.Context) error {
 	var notes []migrate.Note
 	for _, r := range results {
 		notes = append(notes, r.Notes...)
+	}
+	if m.typesafeKey == "" {
+		m.typesafeKey = cmpOr(os.Getenv("ATLANTIS_TYPESAFE_API_KEY"), os.Getenv("TYPESAFE_API_KEY"))
 	}
 	if m.typesafeKey != "" {
 		lctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

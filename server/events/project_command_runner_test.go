@@ -7,24 +7,20 @@ package events_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/hashicorp/go-version"
 	. "github.com/petergtz/pegomock/v4"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/kube/kubedb"
 	"github.com/runatlantis/atlantis/server/core/kube/kubedb/kubedbtest"
 	"github.com/runatlantis/atlantis/server/core/runtime"
-	"github.com/runatlantis/atlantis/server/core/terraform"
-	tmocks "github.com/runatlantis/atlantis/server/core/terraform/mocks"
-	tfclientmocks "github.com/runatlantis/atlantis/server/core/terraform/tfclient/mocks"
 	"github.com/runatlantis/atlantis/server/events"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/mocks"
@@ -43,8 +39,6 @@ func TestDefaultProjectCommandRunner_Plan(t *testing.T) {
 	mockInit := mocks.NewMockStepRunner()
 	mockPlan := mocks.NewMockStepRunner()
 	mockApply := mocks.NewMockStepRunner()
-	mockRun := mocks.NewMockCustomStepRunner()
-	realEnv := runtime.EnvStepRunner{}
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
 	mockCommandRequirementHandler := mocks.NewMockCommandRequirementHandler()
@@ -55,8 +49,6 @@ func TestDefaultProjectCommandRunner_Plan(t *testing.T) {
 		InitStepRunner:            mockInit,
 		PlanStepRunner:            mockPlan,
 		ApplyStepRunner:           mockApply,
-		RunStepRunner:             mockRun,
-		EnvStepRunner:             &realEnv,
 		PullApprovedChecker:       nil,
 		WorkingDir:                mockWorkingDir,
 		Webhooks:                  nil,
@@ -75,17 +67,11 @@ func TestDefaultProjectCommandRunner_Plan(t *testing.T) {
 		"name": "value",
 	}
 
+	// Native inputs set the environment of every step.
 	ctx := command.ProjectContext{
 		Log: logging.NewNoopLogger(t),
+		Env: map[string]string{"name": "value"},
 		Steps: []valid.Step{
-			{
-				StepName:    "env",
-				EnvVarName:  "name",
-				EnvVarValue: "value",
-			},
-			{
-				StepName: "run",
-			},
 			{
 				StepName: "apply",
 			},
@@ -104,14 +90,13 @@ func TestDefaultProjectCommandRunner_Plan(t *testing.T) {
 	When(mockInit.Run(ctx, nil, repoDir, expEnvs)).ThenReturn("init", nil)
 	When(mockPlan.Run(ctx, nil, repoDir, expEnvs)).ThenReturn("plan", nil)
 	When(mockApply.Run(ctx, nil, repoDir, expEnvs)).ThenReturn("apply", nil)
-	When(mockRun.Run(ctx, nil, "", repoDir, expEnvs, true, nil, nil)).ThenReturn("run", nil)
 	res := runner.Plan(ctx)
 
 	Assert(t, res.PlanSuccess != nil, "exp plan success")
 	Equals(t, "https://lock-key", res.PlanSuccess.LockURL)
 	t.Logf("output is %s", res.PlanSuccess.TerraformOutput)
-	Equals(t, "run\napply\nplan\ninit", res.PlanSuccess.TerraformOutput)
-	expSteps := []string{"run", "apply", "plan", "init", "env"}
+	Equals(t, "apply\nplan\ninit", res.PlanSuccess.TerraformOutput)
+	expSteps := []string{"apply", "plan", "init"}
 	for _, step := range expSteps {
 		switch step {
 		case "init":
@@ -120,8 +105,6 @@ func TestDefaultProjectCommandRunner_Plan(t *testing.T) {
 			mockPlan.VerifyWasCalledOnce().Run(ctx, nil, repoDir, expEnvs)
 		case "apply":
 			mockApply.VerifyWasCalledOnce().Run(ctx, nil, repoDir, expEnvs)
-		case "run":
-			mockRun.VerifyWasCalledOnce().Run(ctx, nil, "", repoDir, expEnvs, true, nil, nil)
 		}
 	}
 }
@@ -178,44 +161,6 @@ func TestDefaultProjectCommandRunner_ProjectLockJobURL(t *testing.T) {
 			Equals(t, tt.wantJobURL, workingDirLocker.metadata.JobURL)
 		})
 	}
-}
-
-func TestDefaultProjectCommandRunner_PlanSuppressesCustomRunStepStreaming(t *testing.T) {
-	RegisterMockTestingT(t)
-	mockRun := mocks.NewMockCustomStepRunner()
-	mockWorkingDir := mocks.NewMockWorkingDir()
-	mockLocker := mocks.NewMockProjectLocker()
-	mockCommandRequirementHandler := mocks.NewMockCommandRequirementHandler()
-
-	runner := events.DefaultProjectCommandRunner{
-		Locker:                    mockLocker,
-		LockURLGenerator:          mockURLGenerator{},
-		RunStepRunner:             mockRun,
-		WorkingDir:                mockWorkingDir,
-		WorkingDirLocker:          events.NewDefaultWorkingDirLocker(),
-		CommandRequirementHandler: mockCommandRequirementHandler,
-	}
-
-	repoDir := t.TempDir()
-	When(mockWorkingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string]())).
-		ThenReturn(repoDir, nil)
-	When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-	When(mockLocker.TryLock(Any[logging.SimpleLogging](), Any[models.PullRequest](), Any[models.User](), Any[string](), Any[models.Project](), AnyBool())).
-		ThenReturn(&events.TryLockResponse{LockAcquired: true, LockKey: "lock-key"}, nil)
-
-	ctx := command.ProjectContext{
-		Log:               logging.NewNoopLogger(t),
-		Steps:             []valid.Step{{StepName: "run"}},
-		Workspace:         "default",
-		RepoRelDir:        ".",
-		SuppressJobOutput: true,
-	}
-	When(mockRun.Run(ctx, nil, "", repoDir, map[string]string{}, false, nil, nil)).ThenReturn("run", nil)
-
-	res := runner.Plan(ctx)
-
-	Assert(t, res.PlanSuccess != nil, "exp plan success")
-	mockRun.VerifyWasCalledOnce().Run(ctx, nil, "", repoDir, map[string]string{}, false, nil, nil)
 }
 
 func TestProjectOutputWrapper(t *testing.T) {
@@ -511,151 +456,6 @@ func TestProjectOutputWrapperDoesNotReplayStreamedStepOutput(t *testing.T) {
 	mockJobMessageSender.VerifyWasCalled(Times(2)).Send(Any[command.ProjectContext](), Any[string](), Any[bool]())
 }
 
-func TestProjectOutputWrapperDoesNotReplayCustomRunStepOutput(t *testing.T) {
-	RegisterMockTestingT(t)
-
-	tfClient := tfclientmocks.NewMockClient()
-	tfDistribution := terraform.NewDistributionTerraformWithDownloader(tmocks.NewMockDownloader())
-	tfVersion, err := version.NewVersion("0.12.0")
-	Ok(t, err)
-	projectCmdOutputHandler := jobmocks.NewMockProjectCommandOutputHandler()
-	run := runtime.RunStepRunner{
-		TerraformExecutor:       tfClient,
-		DefaultTFDistribution:   tfDistribution,
-		DefaultTFVersion:        tfVersion,
-		ProjectCmdOutputHandler: projectCmdOutputHandler,
-	}
-	mockLocker := mocks.NewMockProjectLocker()
-	mockWorkingDir := mocks.NewMockWorkingDir()
-	mockJobURLSetter := mocks.NewMockJobURLSetter()
-	mockJobMessageSender := mocks.NewMockJobMessageSender()
-	repoDir := t.TempDir()
-	Ok(t, os.WriteFile(filepath.Join(repoDir, "output.txt"), []byte("already streamed output\n"), 0o600))
-	ctx := command.ProjectContext{
-		Log: logging.NewNoopLogger(t),
-		Steps: []valid.Step{
-			{
-				StepName:   "run",
-				RunCommand: "cat output.txt; exit 1",
-			},
-		},
-		Workspace: "default",
-		Pull: models.PullRequest{
-			BaseRepo: models.Repo{FullName: "runatlantis/atlantis"},
-		},
-		RepoRelDir: ".",
-	}
-
-	When(tfClient.EnsureVersion(Any[logging.SimpleLogging](), Any[terraform.Distribution](), Any[*version.Version]())).
-		ThenReturn(nil)
-	When(mockLocker.TryLock(Any[logging.SimpleLogging](), Any[models.PullRequest](), Any[models.User](),
-		Any[string](), Any[models.Project](), AnyBool())).
-		ThenReturn(&events.TryLockResponse{LockAcquired: true, LockKey: "lock-key", UnlockFn: func() error { return nil }}, nil)
-	When(mockWorkingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](),
-		Any[string]())).ThenReturn(repoDir, nil)
-	When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-
-	runner := &events.ProjectOutputWrapper{
-		JobURLSetter:     mockJobURLSetter,
-		JobMessageSender: mockJobMessageSender,
-		ProjectCommandRunner: &events.DefaultProjectCommandRunner{
-			Locker:                    mockLocker,
-			LockURLGenerator:          mockURLGenerator{},
-			RunStepRunner:             &run,
-			WorkingDir:                mockWorkingDir,
-			WorkingDirLocker:          events.NewDefaultWorkingDirLocker(),
-			CommandRequirementHandler: &events.DefaultCommandRequirementHandler{WorkingDir: mockWorkingDir},
-		},
-	}
-
-	result := runner.Plan(ctx)
-
-	ErrContains(t, "already streamed output", result.Error)
-	_, messages, operationComplete := mockJobMessageSender.VerifyWasCalled(Times(2)).
-		Send(Any[command.ProjectContext](), Any[string](), Any[bool]()).GetAllCapturedArguments()
-	Assert(t, strings.Contains(messages[0], "\r\nError:\r\nrunning 'sh -c' 'cat output.txt; exit 1'"), fmt.Sprintf("expected error summary banner, got %q", messages[0]))
-	Assert(t, !strings.Contains(messages[0], "already streamed output"), fmt.Sprintf("expected banner not to replay run output, got %q", messages[0]))
-	Equals(t, "", messages[1])
-	Equals(t, false, operationComplete[0])
-	Equals(t, true, operationComplete[1])
-}
-
-func TestProjectOutputWrapperPreservesNonStreamedEnvStepOutput(t *testing.T) {
-	RegisterMockTestingT(t)
-
-	tfClient := tfclientmocks.NewMockClient()
-	tfDistribution := terraform.NewDistributionTerraformWithDownloader(tmocks.NewMockDownloader())
-	tfVersion, err := version.NewVersion("0.12.0")
-	Ok(t, err)
-	projectCmdOutputHandler := jobmocks.NewMockProjectCommandOutputHandler()
-	run := runtime.RunStepRunner{
-		TerraformExecutor:       tfClient,
-		DefaultTFDistribution:   tfDistribution,
-		DefaultTFVersion:        tfVersion,
-		ProjectCmdOutputHandler: projectCmdOutputHandler,
-	}
-	env := runtime.EnvStepRunner{
-		RunStepRunner: &run,
-	}
-	mockLocker := mocks.NewMockProjectLocker()
-	mockWorkingDir := mocks.NewMockWorkingDir()
-	mockJobURLSetter := mocks.NewMockJobURLSetter()
-	mockJobMessageSender := mocks.NewMockJobMessageSender()
-	repoDir := t.TempDir()
-	Ok(t, os.WriteFile(filepath.Join(repoDir, "output.txt"), []byte("not streamed output\n"), 0o600))
-	ctx := command.ProjectContext{
-		Log: logging.NewNoopLogger(t),
-		Steps: []valid.Step{
-			{
-				StepName:   "env",
-				EnvVarName: "dynamic_var",
-				RunCommand: "cat output.txt; exit 1",
-			},
-		},
-		Workspace: "default",
-		Pull: models.PullRequest{
-			BaseRepo: models.Repo{FullName: "runatlantis/atlantis"},
-		},
-		RepoRelDir: ".",
-	}
-
-	When(tfClient.EnsureVersion(Any[logging.SimpleLogging](), Any[terraform.Distribution](), Any[*version.Version]())).
-		ThenReturn(nil)
-	When(mockLocker.TryLock(Any[logging.SimpleLogging](), Any[models.PullRequest](), Any[models.User](),
-		Any[string](), Any[models.Project](), AnyBool())).
-		ThenReturn(&events.TryLockResponse{LockAcquired: true, LockKey: "lock-key", UnlockFn: func() error { return nil }}, nil)
-	When(mockWorkingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](),
-		Any[string]())).ThenReturn(repoDir, nil)
-	When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-
-	runner := &events.ProjectOutputWrapper{
-		JobURLSetter:     mockJobURLSetter,
-		JobMessageSender: mockJobMessageSender,
-		ProjectCommandRunner: &events.DefaultProjectCommandRunner{
-			Locker:                    mockLocker,
-			LockURLGenerator:          mockURLGenerator{},
-			RunStepRunner:             &run,
-			EnvStepRunner:             &env,
-			WorkingDir:                mockWorkingDir,
-			WorkingDirLocker:          events.NewDefaultWorkingDirLocker(),
-			CommandRequirementHandler: &events.DefaultCommandRequirementHandler{WorkingDir: mockWorkingDir},
-		},
-	}
-
-	result := runner.Plan(ctx)
-
-	ErrContains(t, "not streamed output", result.Error)
-	_, messages, operationComplete := mockJobMessageSender.VerifyWasCalled(Times(2)).
-		Send(Any[command.ProjectContext](), Any[string](), Any[bool]()).GetAllCapturedArguments()
-	Assert(t, strings.Contains(messages[0], "\r\nError:\r\n"), fmt.Sprintf("expected error banner, got %q", messages[0]))
-	Assert(t, strings.Contains(messages[0], "\r\nnot streamed output\r\n"), fmt.Sprintf("expected banner to include non-streamed output, got %q", messages[0]))
-	Equals(t, "", messages[1])
-	Equals(t, false, operationComplete[0])
-	Equals(t, true, operationComplete[1])
-}
-
-// Test what happens if there's no working dir. This signals that the project
-// was never planned.
 func TestDefaultProjectCommandRunner_ApplyNotCloned(t *testing.T) {
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	runner := &events.DefaultProjectCommandRunner{
@@ -976,7 +776,7 @@ func TestProjectCommandRunner_ApplyRevalidatesImmediatelyBeforeApplyStep(t *test
 		Locker:                    mockLocker,
 		LockURLGenerator:          mockURLGenerator{},
 		ApplyStepRunner:           &recordingStepRunner{name: "apply", calls: &calls},
-		RunStepRunner:             &mutatingCustomStepRunner{calls: &calls},
+		InitStepRunner:            &mutatingStepRunner{calls: &calls},
 		WorkingDir:                mockWorkingDir,
 		WorkingDirLocker:          workingDirLocker,
 		CommandRequirementHandler: &events.DefaultCommandRequirementHandler{WorkingDir: mockWorkingDir},
@@ -987,7 +787,7 @@ func TestProjectCommandRunner_ApplyRevalidatesImmediatelyBeforeApplyStep(t *test
 		Log:         logging.NewNoopLogger(t),
 		CommandName: command.Apply,
 		Steps: []valid.Step{
-			{StepName: "run"},
+			{StepName: "init"},
 			{StepName: "apply"},
 		},
 		Workspace:  "default",
@@ -1005,8 +805,8 @@ func TestProjectCommandRunner_ApplyRevalidatesImmediatelyBeforeApplyStep(t *test
 	res := runner.Apply(ctx)
 
 	Ok(t, res.Error)
-	Equals(t, "run\napply", res.ApplySuccess)
-	Equals(t, []string{"validate", "run", "validate", "apply"}, calls)
+	Equals(t, "init\napply", res.ApplySuccess)
+	Equals(t, []string{"validate", "init", "validate", "apply"}, calls)
 }
 
 func TestProjectCommandRunner_ApplyDoesNotCallApplyStepWhenFinalValidationFails(t *testing.T) {
@@ -1018,7 +818,7 @@ func TestProjectCommandRunner_ApplyDoesNotCallApplyStepWhenFinalValidationFails(
 		Locker:                    mockLocker,
 		LockURLGenerator:          mockURLGenerator{},
 		ApplyStepRunner:           &recordingStepRunner{name: "apply", calls: &calls},
-		RunStepRunner:             &mutatingCustomStepRunner{calls: &calls},
+		InitStepRunner:            &mutatingStepRunner{calls: &calls},
 		WorkingDir:                mockWorkingDir,
 		WorkingDirLocker:          events.NewDefaultWorkingDirLocker(),
 		CommandRequirementHandler: &events.DefaultCommandRequirementHandler{WorkingDir: mockWorkingDir},
@@ -1032,7 +832,7 @@ func TestProjectCommandRunner_ApplyDoesNotCallApplyStepWhenFinalValidationFails(
 		Log:         logging.NewNoopLogger(t),
 		CommandName: command.Apply,
 		Steps: []valid.Step{
-			{StepName: "run"},
+			{StepName: "init"},
 			{StepName: "apply"},
 		},
 		Workspace:  "default",
@@ -1051,7 +851,7 @@ func TestProjectCommandRunner_ApplyDoesNotCallApplyStepWhenFinalValidationFails(
 
 	Assert(t, res.Error != nil, "expected final validation error")
 	Assert(t, strings.Contains(res.Error.Error(), "final validation failed"), "got: %s", res.Error)
-	Equals(t, []string{"validate", "run", "validate"}, calls)
+	Equals(t, []string{"validate", "init", "validate"}, calls)
 }
 
 func TestApplyPlanValidator_RejectsWhenLivePullHeadChanged(t *testing.T) {
@@ -1344,15 +1144,15 @@ func TestProjectCommandRunner_NonPRStableBranchChangedBeforeApplyDoesNotRunApply
 	mockApply.VerifyWasCalled(Never()).Run(Any[command.ProjectContext](), Any[[]string](), Any[string](), Any[map[string]string]())
 }
 
-func TestProjectCommandRunner_NonPRMutableRefChangedBetweenRunStepAndApplyDoesNotRunApply(t *testing.T) {
+func TestProjectCommandRunner_NonPRMutableRefChangedBetweenPreApplyStepAndApplyDoesNotRunApply(t *testing.T) {
 	repoDir, initialCommit := initProjectRunnerAPIRefGitRepo(t)
 	runner, mockApply := newNonPRAPIApplyRunner(t, repoDir)
-	runner.RunStepRunner = &mutatingCustomStepRunner{mutate: func() error {
+	runner.InitStepRunner = &mutatingStepRunner{mutate: func() error {
 		advanceProjectRunnerAPIRefGitMain(t, repoDir)
 		return nil
 	}}
 	ctx := nonPRAPIApplyContext(t, initialCommit)
-	ctx.Steps = []valid.Step{{StepName: "run"}, {StepName: "apply"}}
+	ctx.Steps = []valid.Step{{StepName: "init"}, {StepName: "apply"}}
 
 	res := runner.Apply(ctx)
 
@@ -2244,7 +2044,7 @@ func TestProjectCommandRunner_ApplyDoesNotRunTerraformWhenLiveHeadChangedAfterCo
 	mockApply.VerifyWasCalled(Never()).Run(Any[command.ProjectContext](), Any[[]string](), Any[string](), Any[map[string]string]())
 }
 
-func TestProjectCommandRunner_ApplyRejectsPlanMutatedByPreApplyRunStep(t *testing.T) {
+func TestProjectCommandRunner_ApplyRejectsPlanMutatedByPreApplyStep(t *testing.T) {
 	RegisterMockTestingT(t)
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
@@ -2264,7 +2064,7 @@ func TestProjectCommandRunner_ApplyRejectsPlanMutatedByPreApplyRunStep(t *testin
 		Log:         logging.NewNoopLogger(t),
 		CommandName: command.Apply,
 		Steps: []valid.Step{
-			{StepName: "run"},
+			{StepName: "init"},
 			{StepName: "apply"},
 		},
 		Workspace:   "default",
@@ -2286,7 +2086,7 @@ func TestProjectCommandRunner_ApplyRejectsPlanMutatedByPreApplyRunStep(t *testin
 	Ok(t, err)
 	planPath := filepath.Join(repoDir, runtime.GetPlanFilename(ctx.Workspace, ctx.ProjectName))
 	Ok(t, os.WriteFile(planPath, []byte("plan"), 0600))
-	runner.RunStepRunner = &mutatingCustomStepRunner{
+	runner.InitStepRunner = &mutatingStepRunner{
 		calls: &calls,
 		mutate: func() error {
 			return os.Remove(planPath)
@@ -2301,10 +2101,10 @@ func TestProjectCommandRunner_ApplyRejectsPlanMutatedByPreApplyRunStep(t *testin
 
 	Assert(t, res.Error != nil, "expected final missing plan error")
 	Assert(t, strings.Contains(res.Error.Error(), "plan file is missing"), "got: %s", res.Error)
-	Equals(t, []string{"run"}, calls)
+	Equals(t, []string{"init"}, calls)
 }
 
-func TestProjectCommandRunner_ApplyRejectsPlanOverwrittenByPreApplyRunStep(t *testing.T) {
+func TestProjectCommandRunner_ApplyRejectsPlanOverwrittenByPreApplyStep(t *testing.T) {
 	testProjectCommandRunnerRejectsPlanContentMutation(t, []byte("changed plan"), "plan file changed")
 }
 
@@ -2312,11 +2112,7 @@ func TestProjectCommandRunner_ApplyRejectsPlanMutatedBeforeBuiltInApplyStep(t *t
 	testProjectCommandRunnerRejectsPlanContentMutation(t, []byte("changed plan"), "plan file changed")
 }
 
-func TestProjectCommandRunner_PreApplyRunStepPlanfileExposureIsDocumented(t *testing.T) {
-	testProjectCommandRunnerRejectsPlanContentMutation(t, []byte("changed plan"), "plan file changed")
-}
-
-func TestProjectCommandRunner_ApplyRejectsPlanTruncatedByPreApplyRunStep(t *testing.T) {
+func TestProjectCommandRunner_ApplyRejectsPlanTruncatedByPreApplyStep(t *testing.T) {
 	testProjectCommandRunnerRejectsPlanContentMutation(t, nil, "plan file changed")
 }
 
@@ -2340,7 +2136,7 @@ func testProjectCommandRunnerRejectsPlanContentMutation(t *testing.T, newContent
 		Log:         logging.NewNoopLogger(t),
 		CommandName: command.Apply,
 		Steps: []valid.Step{
-			{StepName: "run"},
+			{StepName: "init"},
 			{StepName: "apply"},
 		},
 		Workspace:   "default",
@@ -2356,7 +2152,7 @@ func testProjectCommandRunnerRejectsPlanContentMutation(t *testing.T, newContent
 	Ok(t, err)
 	planPath := filepath.Join(repoDir, runtime.GetPlanFilename(ctx.Workspace, ctx.ProjectName))
 	Ok(t, os.WriteFile(planPath, []byte("original plan"), 0600))
-	runner.RunStepRunner = &mutatingCustomStepRunner{
+	runner.InitStepRunner = &mutatingStepRunner{
 		calls: &calls,
 		mutate: func() error {
 			return os.WriteFile(planPath, newContents, 0600)
@@ -2374,7 +2170,7 @@ func testProjectCommandRunnerRejectsPlanContentMutation(t *testing.T, newContent
 	contents, err := os.ReadFile(planPath)
 	Ok(t, err)
 	Equals(t, string(newContents), string(contents))
-	Equals(t, []string{"run"}, calls)
+	Equals(t, []string{"init"}, calls)
 }
 
 func TestProjectCommandRunner_ApplyUsesExpectedPlanHash(t *testing.T) {
@@ -2606,7 +2402,7 @@ func TestProjectCommandRunner_ApplyDoesNotRunTerraformWhenPolicyStatusChangesAft
 		Log:         logging.NewNoopLogger(t),
 		CommandName: command.Apply,
 		Steps: []valid.Step{
-			{StepName: "run"},
+			{StepName: "init"},
 			{StepName: "apply"},
 		},
 		Workspace:   "default",
@@ -2628,7 +2424,7 @@ func TestProjectCommandRunner_ApplyDoesNotRunTerraformWhenPolicyStatusChangesAft
 	Ok(t, err)
 	planPath := filepath.Join(repoDir, runtime.GetPlanFilename(ctx.Workspace, ctx.ProjectName))
 	Ok(t, os.WriteFile(planPath, []byte("plan"), 0600))
-	runner.RunStepRunner = &mutatingCustomStepRunner{
+	runner.InitStepRunner = &mutatingStepRunner{
 		calls: &calls,
 		mutate: func() error {
 			_, err := db.UpdatePullWithResults(ctx.Pull, []command.ProjectResult{erroredPolicyProjectResult(ctx)})
@@ -2644,7 +2440,7 @@ func TestProjectCommandRunner_ApplyDoesNotRunTerraformWhenPolicyStatusChangesAft
 
 	Assert(t, res.Error != nil, "expected policy-check status error")
 	Assert(t, strings.Contains(res.Error.Error(), "policy checks have errored"), "got: %s", res.Error)
-	Equals(t, []string{"run"}, calls)
+	Equals(t, []string{"init"}, calls)
 }
 
 func TestProjectCommandRunner_ApplyRejectsStalePullStatusAfterBuilderValidation(t *testing.T) {
@@ -2896,30 +2692,23 @@ func (r *recordingStepRunner) Run(command.ProjectContext, []string, string, map[
 	return r.name, r.err
 }
 
-type mutatingCustomStepRunner struct {
+// mutatingStepRunner is a step that runs before apply and changes state
+// (for example the plan file) to check apply revalidates afterwards.
+type mutatingStepRunner struct {
 	calls  *[]string
 	mutate func() error
 }
 
-func (r *mutatingCustomStepRunner) Run(
-	command.ProjectContext,
-	*valid.CommandShell,
-	string,
-	string,
-	map[string]string,
-	bool,
-	[]valid.PostProcessRunOutputOption,
-	[]*regexp.Regexp,
-) (string, error) {
+func (r *mutatingStepRunner) Run(command.ProjectContext, []string, string, map[string]string) (string, error) {
 	if r.calls != nil {
-		*r.calls = append(*r.calls, "run")
+		*r.calls = append(*r.calls, "init")
 	}
 	if r.mutate != nil {
 		if err := r.mutate(); err != nil {
 			return "", err
 		}
 	}
-	return "run", nil
+	return "init", nil
 }
 
 func erroredPolicyProjectResult(ctx command.ProjectContext) command.ProjectResult {
@@ -3105,16 +2894,8 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 			expOut:        "apply",
 		},
 		{
-			description: "workflow with custom apply stage",
+			description: "steps get the native inputs env",
 			steps: []valid.Step{
-				{
-					StepName:    "env",
-					EnvVarName:  "key",
-					EnvVarValue: "value",
-				},
-				{
-					StepName: "run",
-				},
 				{
 					StepName: "apply",
 				},
@@ -3125,13 +2906,13 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 					StepName: "init",
 				},
 			},
-			expSteps: []string{"env", "run", "apply", "plan", "init"},
-			expOut:   "run\napply\nplan\ninit",
+			expSteps: []string{"apply", "plan", "init"},
+			expOut:   "apply\nplan\ninit",
 		},
 	}
 
 	for _, c := range cases {
-		if c.description != "workflow with custom apply stage" {
+		if c.description != "steps get the native inputs env" {
 			continue
 		}
 		t.Run(c.description, func(t *testing.T) {
@@ -3139,8 +2920,6 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 			mockInit := mocks.NewMockStepRunner()
 			mockPlan := mocks.NewMockStepRunner()
 			mockApply := mocks.NewMockStepRunner()
-			mockRun := mocks.NewMockCustomStepRunner()
-			mockEnv := mocks.NewMockEnvStepRunner()
 			mockWorkingDir := mocks.NewMockWorkingDir()
 			mockLocker := mocks.NewMockProjectLocker()
 			mockSender := mocks.NewMockWebhooksSender()
@@ -3154,8 +2933,6 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 				InitStepRunner:            mockInit,
 				PlanStepRunner:            mockPlan,
 				ApplyStepRunner:           mockApply,
-				RunStepRunner:             mockRun,
-				EnvStepRunner:             mockEnv,
 				WorkingDir:                mockWorkingDir,
 				Webhooks:                  mockSender,
 				WorkingDirLocker:          events.NewDefaultWorkingDirLocker(),
@@ -3182,6 +2959,7 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 
 			ctx := command.ProjectContext{
 				Log:               logging.NewNoopLogger(t),
+				Env:               map[string]string{"key": "value"},
 				Steps:             c.steps,
 				Workspace:         "default",
 				ApplyRequirements: c.applyReqs,
@@ -3199,8 +2977,6 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 			When(mockInit.Run(ctx, nil, repoDir, expEnvs)).ThenReturn("init", nil)
 			When(mockPlan.Run(ctx, nil, repoDir, expEnvs)).ThenReturn("plan", nil)
 			When(mockApply.Run(ctx, nil, repoDir, expEnvs)).ThenReturn("apply", nil)
-			When(mockRun.Run(ctx, nil, "", repoDir, expEnvs, true, nil, nil)).ThenReturn("run", nil)
-			When(mockEnv.Run(ctx, nil, "", "value", repoDir, make(map[string]string))).ThenReturn("value", nil)
 
 			res := runner.Apply(ctx)
 			Equals(t, c.expOut, res.ApplySuccess)
@@ -3214,10 +2990,6 @@ func TestDefaultProjectCommandRunner_Apply(t *testing.T) {
 					mockPlan.VerifyWasCalledOnce().Run(ctx, nil, repoDir, expEnvs)
 				case "apply":
 					mockApply.VerifyWasCalledOnce().Run(ctx, nil, repoDir, expEnvs)
-				case "run":
-					mockRun.VerifyWasCalledOnce().Run(ctx, nil, "", repoDir, expEnvs, true, nil, nil)
-				case "env":
-					mockEnv.VerifyWasCalledOnce().Run(ctx, nil, "", "value", repoDir, expEnvs)
 				}
 			}
 		})
@@ -3332,92 +3104,6 @@ func TestDefaultProjectCommandRunner_ApplySuppressesApplyWebhooks(t *testing.T) 
 	mockSender.VerifyWasCalled(Never()).Send(Any[logging.SimpleLogging](), Any[webhooks.ApplyResult]())
 }
 
-// Test run and env steps. We don't use mocks for this test since we're
-// not running any Terraform.
-func TestDefaultProjectCommandRunner_RunEnvSteps(t *testing.T) {
-	RegisterMockTestingT(t)
-	tfClient := tfclientmocks.NewMockClient()
-	tfDistribution := terraform.NewDistributionTerraformWithDownloader(tmocks.NewMockDownloader())
-	tfVersion, err := version.NewVersion("0.12.0")
-	Ok(t, err)
-	projectCmdOutputHandler := jobmocks.NewMockProjectCommandOutputHandler()
-	run := runtime.RunStepRunner{
-		TerraformExecutor:       tfClient,
-		DefaultTFDistribution:   tfDistribution,
-		DefaultTFVersion:        tfVersion,
-		ProjectCmdOutputHandler: projectCmdOutputHandler,
-	}
-	env := runtime.EnvStepRunner{
-		RunStepRunner: &run,
-	}
-	mockWorkingDir := mocks.NewMockWorkingDir()
-	mockLocker := mocks.NewMockProjectLocker()
-	mockCommandRequirementHandler := mocks.NewMockCommandRequirementHandler()
-
-	runner := events.DefaultProjectCommandRunner{
-		Locker:                    mockLocker,
-		LockURLGenerator:          mockURLGenerator{},
-		RunStepRunner:             &run,
-		EnvStepRunner:             &env,
-		WorkingDir:                mockWorkingDir,
-		Webhooks:                  nil,
-		WorkingDirLocker:          events.NewDefaultWorkingDirLocker(),
-		CommandRequirementHandler: mockCommandRequirementHandler,
-	}
-
-	repoDir := t.TempDir()
-	When(mockWorkingDir.Clone(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](),
-		Any[string]())).ThenReturn(repoDir, nil)
-	When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-	When(mockLocker.TryLock(Any[logging.SimpleLogging](), Any[models.PullRequest](), Any[models.User](), Any[string](),
-		Any[models.Project](), AnyBool())).ThenReturn(&events.TryLockResponse{LockAcquired: true, LockKey: "lock-key"}, nil)
-
-	ctx := command.ProjectContext{
-		Log: logging.NewNoopLogger(t),
-		Steps: []valid.Step{
-			{
-				StepName:   "run",
-				RunCommand: "echo var=$var",
-			},
-			{
-				StepName:    "env",
-				EnvVarName:  "var",
-				EnvVarValue: "value",
-			},
-			{
-				StepName:   "run",
-				RunCommand: "echo var=$var",
-			},
-			{
-				StepName:   "env",
-				EnvVarName: "dynamic_var",
-				RunCommand: "echo dynamic_value",
-			},
-			{
-				StepName:   "run",
-				RunCommand: "echo dynamic_var=$dynamic_var",
-			},
-			// Test overriding the variable
-			{
-				StepName:    "env",
-				EnvVarName:  "dynamic_var",
-				EnvVarValue: "overridden",
-			},
-			{
-				StepName:   "run",
-				RunCommand: "echo dynamic_var=$dynamic_var",
-			},
-		},
-		Workspace:  "default",
-		RepoRelDir: ".",
-	}
-	res := runner.Plan(ctx)
-	Assert(t, res.PlanSuccess != nil, "exp plan success")
-	Equals(t, "https://lock-key", res.PlanSuccess.LockURL)
-	Equals(t, "var=\n\nvar=value\n\ndynamic_var=dynamic_value\n\ndynamic_var=overridden\n", res.PlanSuccess.TerraformOutput)
-}
-
-// Test that it runs the expected import steps.
 func TestDefaultProjectCommandRunner_Import(t *testing.T) {
 	expEnvs := map[string]string{}
 	cases := []struct {
@@ -3538,639 +3224,6 @@ func (m mockURLGenerator) GenerateLockURL(lockID string) string {
 	return "https://" + lockID
 }
 
-// Test that custom policy checks use configured policy set names instead of defaulting to "Custom".
-// This is a regression test for https://github.com/runatlantis/atlantis/pull/5331
-// where custom policy sets defaulting to "Custom" allowed any user to approve policies.
-func TestDefaultProjectCommandRunner_CustomPolicyCheckNames(t *testing.T) {
-	RegisterMockTestingT(t)
-
-	cases := []struct {
-		description       string
-		customPolicyCheck bool
-		policySets        []valid.PolicySet
-		policyOutputs     []string
-		expectedNames     []string
-	}{
-		{
-			description:       "Custom policy check with single named policy set",
-			customPolicyCheck: true,
-			policySets: []valid.PolicySet{
-				{
-					Name:         "security_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"security-team"},
-					},
-				},
-			},
-			policyOutputs: []string{"Policy check passed"},
-			expectedNames: []string{"security_policy"},
-		},
-		{
-			description:       "Custom policy check with multiple named policy sets",
-			customPolicyCheck: true,
-			policySets: []valid.PolicySet{
-				{
-					Name:         "security_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"security-team"},
-					},
-				},
-				{
-					Name:         "compliance_policy",
-					ApproveCount: 2,
-					Owners: valid.PolicyOwners{
-						Users: []string{"compliance-team"},
-					},
-				},
-			},
-			policyOutputs: []string{"Security check passed", "Compliance check FAIL"},
-			expectedNames: []string{"security_policy", "compliance_policy"},
-		},
-		{
-			description:       "Custom policy check defaults to 'Custom' when no policy set configured",
-			customPolicyCheck: true,
-			policySets:        []valid.PolicySet{},
-			policyOutputs:     []string{"Policy check passed"},
-			expectedNames:     []string{"Custom"},
-		},
-		{
-			description:       "More outputs than policy sets - excess use 'Custom'",
-			customPolicyCheck: true,
-			policySets: []valid.PolicySet{
-				{
-					Name:         "security_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"security-team"},
-					},
-				},
-			},
-			policyOutputs: []string{"Security check passed", "Extra check passed"},
-			expectedNames: []string{"security_policy", "Custom"},
-		},
-		{
-			description:       "More policy sets than outputs - only received outputs processed",
-			customPolicyCheck: true,
-			policySets: []valid.PolicySet{
-				{
-					Name:         "security_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"security-team"},
-					},
-				},
-				{
-					Name:         "compliance_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"compliance-team"},
-					},
-				},
-				{
-					Name:         "audit_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"audit-team"},
-					},
-				},
-			},
-			policyOutputs: []string{"Security check passed"},
-			expectedNames: []string{"security_policy"},
-		},
-		{
-			description:       "Empty output is preserved and marked as failed",
-			customPolicyCheck: true,
-			policySets: []valid.PolicySet{
-				{
-					Name:         "security_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"security-team"},
-					},
-				},
-				{
-					Name:         "compliance_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"compliance-team"},
-					},
-				},
-			},
-			policyOutputs: []string{"Security check passed", ""},
-			expectedNames: []string{"security_policy", "compliance_policy"},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.description, func(t *testing.T) {
-			mockPolicyCheck := mocks.NewMockStepRunner()
-			mockWorkingDir := mocks.NewMockWorkingDir()
-			mockLocker := mocks.NewMockProjectLocker()
-
-			runner := events.DefaultProjectCommandRunner{
-				Locker:                mockLocker,
-				LockURLGenerator:      mockURLGenerator{},
-				PolicyCheckStepRunner: mockPolicyCheck,
-				WorkingDir:            mockWorkingDir,
-				WorkingDirLocker:      events.NewDefaultWorkingDirLocker(),
-			}
-
-			repoDir := t.TempDir()
-			When(mockWorkingDir.GetWorkingDir(
-				Any[models.Repo](),
-				Any[models.PullRequest](),
-				Any[string](),
-			)).ThenReturn(repoDir, nil)
-			When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-
-			When(mockLocker.TryLock(
-				Any[logging.SimpleLogging](),
-				Any[models.PullRequest](),
-				Any[models.User](),
-				Any[string](),
-				Any[models.Project](),
-				AnyBool(),
-			)).ThenReturn(&events.TryLockResponse{
-				LockAcquired: true,
-				LockKey:      "lock-key",
-			}, nil)
-
-			// Setup policy check steps - one step per policy output
-			var steps []valid.Step
-			for range c.policyOutputs {
-				steps = append(steps, valid.Step{
-					StepName: "policy_check",
-				})
-			}
-
-			// Setup mock to return outputs in sequence
-			// Note: pegomock will return these in order for successive calls
-			for _, output := range c.policyOutputs {
-				When(mockPolicyCheck.Run(
-					Any[command.ProjectContext](),
-					Any[[]string](),
-					Any[string](),
-					Any[map[string]string](),
-				)).ThenReturn(output, nil)
-			}
-
-			ctx := command.ProjectContext{
-				Log:               logging.NewNoopLogger(t),
-				Workspace:         "default",
-				RepoRelDir:        ".",
-				CustomPolicyCheck: c.customPolicyCheck,
-				PolicySets: valid.PolicySets{
-					PolicySets: c.policySets,
-				},
-				Steps: steps,
-			}
-
-			res := runner.PolicyCheck(ctx)
-
-			Assert(t, res.Error == nil, "not expecting error: %v", res.Error)
-			Assert(t, res.PolicyCheckResults != nil, "expecting policy check results")
-
-			// Verify that the policy set names match the configured names
-			policyResults := res.PolicyCheckResults.PolicySetResults
-			Equals(t, len(c.expectedNames), len(policyResults))
-
-			for i, expectedName := range c.expectedNames {
-				Equals(t, expectedName, policyResults[i].PolicySetName)
-			}
-		})
-	}
-}
-
-// Test that when custom policy check has configured policy sets but no outputs are generated,
-// it does NOT trigger "unable to unmarshal conftest output" error.
-// This test reproduces the bug where policySetResults remains nil when the outputs
-// array is empty, which would incorrectly trigger the nil check error.
-func TestDefaultProjectCommandRunner_CustomPolicyCheck_EmptyOutputsArray(t *testing.T) {
-	RegisterMockTestingT(t)
-
-	cases := []struct {
-		description       string
-		customPolicyCheck bool
-		policySets        []valid.PolicySet
-		steps             []valid.Step
-		expectError       bool
-		expectedErrorMsg  string
-	}{
-		{
-			description:       "Custom policy check with configured policy set but no steps (empty outputs array)",
-			customPolicyCheck: true,
-			policySets: []valid.PolicySet{
-				{
-					Name:         "test_policy",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Users: []string{"test-user"},
-					},
-				},
-			},
-			steps:            []valid.Step{}, // No steps - outputs array will be empty
-			expectError:      true,           // Should error when policy sets configured but no results
-			expectedErrorMsg: "custom policy check produced no results despite configured policy sets",
-		},
-		{
-			description:       "Custom policy check with no configured policy sets and no steps",
-			customPolicyCheck: true,
-			policySets:        []valid.PolicySet{}, // No policy sets configured
-			steps:             []valid.Step{},      // No steps
-			expectError:       false,               // Should NOT error when no policy sets configured
-			expectedErrorMsg:  "",
-		},
-		{
-			description:       "Non-custom (conftest) policy check with no steps",
-			customPolicyCheck: false,
-			policySets:        []valid.PolicySet{},
-			steps:             []valid.Step{},
-			expectError:       true,
-			expectedErrorMsg:  "unable to unmarshal conftest output",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.description, func(t *testing.T) {
-			mockPolicyCheck := mocks.NewMockStepRunner()
-			mockWorkingDir := mocks.NewMockWorkingDir()
-			mockLocker := mocks.NewMockProjectLocker()
-
-			runner := events.DefaultProjectCommandRunner{
-				Locker:                mockLocker,
-				LockURLGenerator:      mockURLGenerator{},
-				PolicyCheckStepRunner: mockPolicyCheck,
-				WorkingDir:            mockWorkingDir,
-				WorkingDirLocker:      events.NewDefaultWorkingDirLocker(),
-			}
-
-			repoDir := t.TempDir()
-			When(mockWorkingDir.GetWorkingDir(
-				Any[models.Repo](),
-				Any[models.PullRequest](),
-				Any[string](),
-			)).ThenReturn(repoDir, nil)
-			When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-
-			When(mockLocker.TryLock(
-				Any[logging.SimpleLogging](),
-				Any[models.PullRequest](),
-				Any[models.User](),
-				Any[string](),
-				Any[models.Project](),
-				AnyBool(),
-			)).ThenReturn(&events.TryLockResponse{
-				LockAcquired: true,
-				LockKey:      "lock-key",
-				UnlockFn:     func() error { return nil },
-			}, nil)
-
-			ctx := command.ProjectContext{
-				Log:               logging.NewNoopLogger(t),
-				Workspace:         "default",
-				RepoRelDir:        ".",
-				CustomPolicyCheck: c.customPolicyCheck,
-				PolicySets: valid.PolicySets{
-					PolicySets: c.policySets,
-				},
-				Steps: c.steps,
-			}
-
-			res := runner.PolicyCheck(ctx)
-
-			if c.expectError {
-				Assert(t, res.Error != nil, "expecting error but got nil")
-				if c.expectedErrorMsg != "" {
-					Assert(t, res.Error.Error() == c.expectedErrorMsg,
-						"expected error message '%s' but got '%s'",
-						c.expectedErrorMsg, res.Error.Error())
-				}
-			} else {
-				Assert(t, res.Error == nil, "not expecting error but got: %v", res.Error)
-				Assert(t, res.PolicyCheckResults != nil, "expecting policy check results")
-			}
-		})
-	}
-}
-
-// Test custom policy check failure detection logic (regex and FAIL prefix).
-func TestDefaultProjectCommandRunner_CustomPolicyCheckFailureDetection(t *testing.T) {
-	RegisterMockTestingT(t)
-
-	cases := []struct {
-		description    string
-		policyOutput   string
-		expectedPassed bool
-		expectedOutput string
-	}{
-		{
-			description:    "Output with '1 failure' pattern should fail",
-			policyOutput:   "Policy check found 1 failure in the code",
-			expectedPassed: false,
-			expectedOutput: "Policy check found 1 failure in the code",
-		},
-		{
-			description:    "Output with '2 failures' pattern should fail",
-			policyOutput:   "Found 2 failures in security scan",
-			expectedPassed: false,
-			expectedOutput: "Found 2 failures in security scan",
-		},
-		{
-			description:    "Output with '10 failures' pattern should fail",
-			policyOutput:   "Total: 10 failures detected",
-			expectedPassed: false,
-			expectedOutput: "Total: 10 failures detected",
-		},
-		{
-			description:    "Output with JSON 'failures': [...] pattern should fail",
-			policyOutput:   `{"result": "failures": [{"rule": "test"}]}`,
-			expectedPassed: false,
-			expectedOutput: `{"result": "failures": [{"rule": "test"}]}`,
-		},
-		{
-			description:    "Output starting with 'FAIL' prefix should fail",
-			policyOutput:   "FAIL: Policy validation failed",
-			expectedPassed: false,
-			expectedOutput: "FAIL: Policy validation failed",
-		},
-		{
-			description:    "Output starting with 'FAIL' after whitespace should fail",
-			policyOutput:   "  FAIL: Something went wrong",
-			expectedPassed: false,
-			expectedOutput: "  FAIL: Something went wrong",
-		},
-		{
-			description:    "Output with 'FAIL' in middle should pass",
-			policyOutput:   "The check did not FAIL completely",
-			expectedPassed: true,
-			expectedOutput: "The check did not FAIL completely",
-		},
-		{
-			description:    "Output with '0 failure' should pass (regex only matches 1-9)",
-			policyOutput:   "Found 0 failure in the scan",
-			expectedPassed: true,
-			expectedOutput: "Found 0 failure in the scan",
-		},
-		{
-			description:    "Output with word 'failure' but not pattern should pass",
-			policyOutput:   "This is a failure message but not a failure count",
-			expectedPassed: true,
-			expectedOutput: "This is a failure message but not a failure count",
-		},
-		{
-			description:    "Output with 'fail' word should pass (not matching pattern)",
-			policyOutput:   "The test might fail if conditions are not met",
-			expectedPassed: true,
-			expectedOutput: "The test might fail if conditions are not met",
-		},
-		{
-			description:    "Output with 'failures' word but not JSON pattern should pass",
-			policyOutput:   "Checking for potential failures in the system",
-			expectedPassed: true,
-			expectedOutput: "Checking for potential failures in the system",
-		},
-		{
-			description:    "Output with '99 failures' should fail",
-			policyOutput:   "Detected 99 failures in compliance check",
-			expectedPassed: false,
-			expectedOutput: "Detected 99 failures in compliance check",
-		},
-		{
-			description:    "Output with '100 failures' should fail",
-			policyOutput:   "Total: 100 failures found",
-			expectedPassed: false,
-			expectedOutput: "Total: 100 failures found",
-		},
-		{
-			description:    "Normal success output should pass",
-			policyOutput:   "Policy check passed successfully",
-			expectedPassed: true,
-			expectedOutput: "Policy check passed successfully",
-		},
-		{
-			description:    "Empty output should fail (handled separately but included for completeness)",
-			policyOutput:   "",
-			expectedPassed: false,
-			expectedOutput: "WARNING: Policy check produced no output. This may indicate a misconfiguration.",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.description, func(t *testing.T) {
-			mockPolicyCheck := mocks.NewMockStepRunner()
-			mockWorkingDir := mocks.NewMockWorkingDir()
-			mockLocker := mocks.NewMockProjectLocker()
-
-			runner := events.DefaultProjectCommandRunner{
-				Locker:                mockLocker,
-				LockURLGenerator:      mockURLGenerator{},
-				PolicyCheckStepRunner: mockPolicyCheck,
-				WorkingDir:            mockWorkingDir,
-				WorkingDirLocker:      events.NewDefaultWorkingDirLocker(),
-			}
-
-			repoDir := t.TempDir()
-			When(mockWorkingDir.GetWorkingDir(
-				Any[models.Repo](),
-				Any[models.PullRequest](),
-				Any[string](),
-			)).ThenReturn(repoDir, nil)
-			When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-
-			When(mockLocker.TryLock(
-				Any[logging.SimpleLogging](),
-				Any[models.PullRequest](),
-				Any[models.User](),
-				Any[string](),
-				Any[models.Project](),
-				AnyBool(),
-			)).ThenReturn(&events.TryLockResponse{
-				LockAcquired: true,
-				LockKey:      "lock-key",
-			}, nil)
-
-			// Setup policy check step
-			steps := []valid.Step{
-				{
-					StepName: "policy_check",
-				},
-			}
-
-			// Setup mock to return the test output
-			When(mockPolicyCheck.Run(
-				Any[command.ProjectContext](),
-				Any[[]string](),
-				Any[string](),
-				Any[map[string]string](),
-			)).ThenReturn(c.policyOutput, nil)
-
-			ctx := command.ProjectContext{
-				Log:               logging.NewNoopLogger(t),
-				Workspace:         "default",
-				RepoRelDir:        ".",
-				CustomPolicyCheck: true,
-				PolicySets: valid.PolicySets{
-					PolicySets: []valid.PolicySet{
-						{
-							Name:         "test_policy",
-							ApproveCount: 1,
-							Owners: valid.PolicyOwners{
-								Users: []string{"test-user"},
-							},
-						},
-					},
-				},
-				Steps: steps,
-			}
-
-			res := runner.PolicyCheck(ctx)
-
-			Assert(t, res.Error == nil, "not expecting error: %v", res.Error)
-			Assert(t, res.PolicyCheckResults != nil, "expecting policy check results")
-
-			// Verify the result
-			policyResults := res.PolicyCheckResults.PolicySetResults
-			Equals(t, 1, len(policyResults))
-			Equals(t, c.expectedPassed, policyResults[0].Passed)
-			Equals(t, c.expectedOutput, policyResults[0].PolicyOutput)
-			Equals(t, "test_policy", policyResults[0].PolicySetName)
-		})
-	}
-}
-
-// Test that custom policy checks do not produce any additional output in the PreConftestOutput or PostConfTestOutput blocks
-// This is a regression test for two bugs:
-// 1. A blank code block would appear in custom policy check comments due PreConftestOutput being present.
-// 2. The last policy output would appear both in the PolicySetResults and in PostConftestOutput.
-func TestDefaultProjectCommandRunner_CustomPolicyCheck_NoPreOrPostConftestOutput(t *testing.T) {
-	RegisterMockTestingT(t)
-
-	cases := []struct {
-		description   string
-		policyOutputs []string
-		policySets    []valid.PolicySet
-	}{
-		{
-			description:   "Single custom policy check",
-			policyOutputs: []string{"Custom policy check - 0 failures, 5 passed"},
-			policySets: []valid.PolicySet{
-				{
-					Name:         "policy1",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Teams: []string{"team-1"},
-					},
-				},
-			},
-		},
-		{
-			description: "Multiple custom policy checks",
-			policyOutputs: []string{
-				"Custom policy check 1 - 0 failures, 5 passed",
-				"Custom policy check 2 - 1 failures, 3 passed",
-			},
-			policySets: []valid.PolicySet{
-				{
-					Name:         "policy1",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Teams: []string{"team-1"},
-					},
-				},
-				{
-					Name:         "policy2",
-					ApproveCount: 1,
-					Owners: valid.PolicyOwners{
-						Teams: []string{"team-2"},
-					},
-				},
-			},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.description, func(t *testing.T) {
-			mockPolicyCheck := mocks.NewMockStepRunner()
-			mockWorkingDir := mocks.NewMockWorkingDir()
-			mockLocker := mocks.NewMockProjectLocker()
-
-			runner := events.DefaultProjectCommandRunner{
-				Locker:                mockLocker,
-				LockURLGenerator:      mockURLGenerator{},
-				PolicyCheckStepRunner: mockPolicyCheck,
-				WorkingDir:            mockWorkingDir,
-				WorkingDirLocker:      events.NewDefaultWorkingDirLocker(),
-			}
-
-			repoDir := t.TempDir()
-			When(mockWorkingDir.GetWorkingDir(
-				Any[models.Repo](),
-				Any[models.PullRequest](),
-				Any[string](),
-			)).ThenReturn(repoDir, nil)
-			When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-
-			When(mockLocker.TryLock(
-				Any[logging.SimpleLogging](),
-				Any[models.PullRequest](),
-				Any[models.User](),
-				Any[string](),
-				Any[models.Project](),
-				Any[bool](),
-			)).ThenReturn(&events.TryLockResponse{
-				LockAcquired: true,
-				LockKey:      "lock-key",
-			}, nil)
-
-			var steps []valid.Step
-			for range c.policyOutputs {
-				steps = append(steps, valid.Step{StepName: "policy_check"})
-			}
-
-			mockCall := When(mockPolicyCheck.Run(
-				Any[command.ProjectContext](),
-				Any[[]string](),
-				Any[string](),
-				Any[map[string]string](),
-			))
-			for _, output := range c.policyOutputs {
-				mockCall = mockCall.ThenReturn(output, nil)
-			}
-
-			ctx := command.ProjectContext{
-				Log:               logging.NewNoopLogger(t),
-				Workspace:         "default",
-				RepoRelDir:        ".",
-				CustomPolicyCheck: true,
-				PolicySets: valid.PolicySets{
-					PolicySets: c.policySets,
-				},
-				Steps: steps,
-			}
-
-			res := runner.PolicyCheck(ctx)
-
-			Assert(t, res.Error == nil, "not expecting error: %v", res.Error)
-			Assert(t, res.PolicyCheckResults != nil, "expecting policy check results")
-
-			policyResults := res.PolicyCheckResults.PolicySetResults
-			Equals(t, len(c.policyOutputs), len(policyResults))
-
-			for i, expectedOutput := range c.policyOutputs {
-				Equals(t, c.policySets[i].Name, policyResults[i].PolicySetName)
-				Equals(t, expectedOutput, policyResults[i].PolicyOutput)
-			}
-
-			// All outputs should be in PolicySetResults, not in PreConftestOutput or PostConftestOutput
-			Equals(t, "", res.PolicyCheckResults.PreConftestOutput)
-			Equals(t, "", res.PolicyCheckResults.PostConftestOutput)
-		})
-	}
-}
-
-// Test approve policies logic.
 func TestDefaultProjectCommandRunner_ApprovePolicies(t *testing.T) {
 	cases := []struct {
 		description string
@@ -4683,8 +3736,6 @@ func TestDefaultProjectCommandRunner_ApprovePolicies(t *testing.T) {
 			mockInit := mocks.NewMockStepRunner()
 			mockPlan := mocks.NewMockStepRunner()
 			mockApply := mocks.NewMockStepRunner()
-			mockRun := mocks.NewMockCustomStepRunner()
-			mockEnv := mocks.NewMockEnvStepRunner()
 			mockWorkingDir := mocks.NewMockWorkingDir()
 			mockLocker := mocks.NewMockProjectLocker()
 			mockSender := mocks.NewMockWebhooksSender()
@@ -4696,8 +3747,6 @@ func TestDefaultProjectCommandRunner_ApprovePolicies(t *testing.T) {
 				InitStepRunner:   mockInit,
 				PlanStepRunner:   mockPlan,
 				ApplyStepRunner:  mockApply,
-				RunStepRunner:    mockRun,
-				EnvStepRunner:    mockEnv,
 				WorkingDir:       mockWorkingDir,
 				Webhooks:         mockSender,
 				WorkingDirLocker: events.NewDefaultWorkingDirLocker(),
@@ -4764,8 +3813,6 @@ func TestDefaultProjectCommandRunner_ApprovePolicies_DuplicateApproval(t *testin
 	mockInit := mocks.NewMockStepRunner()
 	mockPlan := mocks.NewMockStepRunner()
 	mockApply := mocks.NewMockStepRunner()
-	mockRun := mocks.NewMockCustomStepRunner()
-	mockEnv := mocks.NewMockEnvStepRunner()
 	mockWorkingDir := mocks.NewMockWorkingDir()
 	mockLocker := mocks.NewMockProjectLocker()
 	mockSender := mocks.NewMockWebhooksSender()
@@ -4777,8 +3824,6 @@ func TestDefaultProjectCommandRunner_ApprovePolicies_DuplicateApproval(t *testin
 		InitStepRunner:   mockInit,
 		PlanStepRunner:   mockPlan,
 		ApplyStepRunner:  mockApply,
-		RunStepRunner:    mockRun,
-		EnvStepRunner:    mockEnv,
 		WorkingDir:       mockWorkingDir,
 		Webhooks:         mockSender,
 		WorkingDirLocker: events.NewDefaultWorkingDirLocker(),
@@ -4874,19 +3919,18 @@ func TestDefaultProjectCommandRunner_PolicyCheck_StickyCarryOverPreservesDormant
 		LockKey:      "lock-key",
 	}, nil)
 
-	// Custom policy check returning NEW hashes (simulating changed code).
+	// Policy check returning NEW hashes (simulating changed code).
 	When(mockPolicyCheck.Run(
 		Any[command.ProjectContext](),
 		Any[[]string](),
 		Any[string](),
 		Any[map[string]string](),
-	)).ThenReturn("1 failure found\nnew-violation-line", nil)
+	)).ThenReturn(conftestOutput(t, "policy1", "1 failure found\nnew-violation-line", false, ".*"), nil)
 
 	ctx := command.ProjectContext{
-		Log:               logging.NewNoopLogger(t),
-		Workspace:         "default",
-		RepoRelDir:        ".",
-		CustomPolicyCheck: true,
+		Log:        logging.NewNoopLogger(t),
+		Workspace:  "default",
+		RepoRelDir: ".",
 		PolicySets: valid.PolicySets{
 			PolicySets: []valid.PolicySet{
 				{
@@ -5021,13 +4065,12 @@ func TestDefaultProjectCommandRunner_PolicyCheck_StickyCarryOverBehavior(t *test
 				Any[[]string](),
 				Any[string](),
 				Any[map[string]string](),
-			)).ThenReturn("new-violation-line", nil)
+			)).ThenReturn(conftestOutput(t, "policy1", "new-violation-line", true, c.configRegex), nil)
 
 			ctx := command.ProjectContext{
-				Log:               logging.NewNoopLogger(t),
-				Workspace:         "default",
-				RepoRelDir:        ".",
-				CustomPolicyCheck: true,
+				Log:        logging.NewNoopLogger(t),
+				Workspace:  "default",
+				RepoRelDir: ".",
 				PolicySets: valid.PolicySets{
 					PolicySets: []valid.PolicySet{
 						{
@@ -5128,8 +4171,6 @@ func TestDefaultProjectCommandRunner_ApprovePolicies_HashAwareApproval(t *testin
 			mockInit := mocks.NewMockStepRunner()
 			mockPlan := mocks.NewMockStepRunner()
 			mockApply := mocks.NewMockStepRunner()
-			mockRun := mocks.NewMockCustomStepRunner()
-			mockEnv := mocks.NewMockEnvStepRunner()
 			mockWorkingDir := mocks.NewMockWorkingDir()
 			mockLocker := mocks.NewMockProjectLocker()
 			mockSender := mocks.NewMockWebhooksSender()
@@ -5141,8 +4182,6 @@ func TestDefaultProjectCommandRunner_ApprovePolicies_HashAwareApproval(t *testin
 				InitStepRunner:   mockInit,
 				PlanStepRunner:   mockPlan,
 				ApplyStepRunner:  mockApply,
-				RunStepRunner:    mockRun,
-				EnvStepRunner:    mockEnv,
 				WorkingDir:       mockWorkingDir,
 				Webhooks:         mockSender,
 				WorkingDirLocker: events.NewDefaultWorkingDirLocker(),
@@ -5326,99 +4365,6 @@ func TestDefaultProjectCommandRunner_PathTraversal(t *testing.T) {
 	}
 }
 
-// TestDefaultProjectCommandRunner_ApplyCustomPlanPathWorkflow reproduces the
-// regression reported in #6642: a workflow whose apply consists only of custom
-// `run` steps writes its plan to a custom path (e.g. atlantis.tfplan) rather
-// than the Atlantis convention path (<workspace>.tfplan). Apply must not be
-// rejected for a missing convention plan file that this workflow never creates.
-func TestDefaultProjectCommandRunner_ApplyCustomPlanPathWorkflow(t *testing.T) {
-	RegisterMockTestingT(t)
-	mockRun := mocks.NewMockCustomStepRunner()
-	mockWorkingDir := mocks.NewMockWorkingDir()
-	mockLocker := mocks.NewMockProjectLocker()
-	mockSender := mocks.NewMockWebhooksSender()
-	testDB := newTestDB(t)
-	repoDir := t.TempDir()
-
-	runner := events.DefaultProjectCommandRunner{
-		Locker:           mockLocker,
-		LockURLGenerator: mockURLGenerator{},
-		RunStepRunner:    mockRun,
-		WorkingDir:       mockWorkingDir,
-		WorkingDirLocker: events.NewDefaultWorkingDirLocker(),
-		CommandRequirementHandler: &events.DefaultCommandRequirementHandler{
-			WorkingDir: mockWorkingDir,
-		},
-		Webhooks:           mockSender,
-		ApplyPlanValidator: &events.DefaultApplyPlanValidator{PullStatusFetcher: testDB},
-	}
-
-	When(mockWorkingDir.GetWorkingDir(
-		Any[models.Repo](),
-		Any[models.PullRequest](),
-		Any[string](),
-	)).ThenReturn(repoDir, nil)
-	When(mockWorkingDir.GitReadLock(Any[models.Repo](), Any[models.PullRequest](), Any[string]())).ThenReturn(func() {})
-	When(mockLocker.TryLock(
-		Any[logging.SimpleLogging](),
-		Any[models.PullRequest](),
-		Any[models.User](),
-		Any[string](),
-		Any[models.Project](),
-		AnyBool(),
-	)).ThenReturn(&events.TryLockResponse{
-		LockAcquired: true,
-		LockKey:      "lock-key",
-	}, nil)
-
-	ctx := command.ProjectContext{
-		Log:         logging.NewNoopLogger(t),
-		CommandName: command.Apply,
-		Workspace:   "default",
-		RepoRelDir:  ".",
-		Steps: []valid.Step{
-			{StepName: "run", RunCommand: "terraform apply atlantis.tfplan"},
-		},
-		ApplyRequirements: []string{},
-		Pull: models.PullRequest{
-			Num:        1,
-			HeadCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			BaseRepo:   models.Repo{FullName: "runatlantis/atlantis"},
-		},
-	}
-
-	// The custom workflow wrote its own plan artifact. The Atlantis convention
-	// plan file (default.tfplan) deliberately does not exist.
-	Ok(t, os.WriteFile(filepath.Join(repoDir, "atlantis.tfplan"), []byte("custom plan"), 0600))
-	_, err := os.Stat(filepath.Join(repoDir, runtime.GetPlanFilename(ctx.Workspace, ctx.ProjectName)))
-	Assert(t, os.IsNotExist(err), "convention plan file must not exist for this fixture")
-
-	_, err = testDB.UpdatePullWithResults(ctx.Pull, []command.ProjectResult{
-		plannedProjectResult(ctx.RepoRelDir, ctx.Workspace, ctx.ProjectName),
-	})
-	Ok(t, err)
-
-	When(mockRun.Run(
-		Any[command.ProjectContext](),
-		Any[*valid.CommandShell](),
-		Any[string](),
-		Any[string](),
-		Any[map[string]string](),
-		AnyBool(),
-		Any[[]valid.PostProcessRunOutputOption](),
-		Any[[]*regexp.Regexp](),
-	)).ThenReturn("apply output", nil)
-
-	res := runner.Apply(ctx)
-
-	Assert(t, res.Error == nil, "expected no error, got: %v", res.Error)
-	Assert(t, res.Failure == "", "expected no failure, got: %q", res.Failure)
-	Equals(t, "apply output", res.ApplySuccess)
-}
-
-// TestDefaultProjectCommandRunner_ApplyManagedPlanFileStillRequired guards the
-// #6642 fix against over-permitting: a workflow that uses the built-in apply
-// step must still be rejected when the convention plan file is absent.
 func TestDefaultProjectCommandRunner_ApplyManagedPlanFileStillRequired(t *testing.T) {
 	RegisterMockTestingT(t)
 	mockApply := mocks.NewMockStepRunner()
@@ -5486,4 +4432,15 @@ func TestDefaultProjectCommandRunner_ApplyManagedPlanFileStillRequired(t *testin
 	Assert(t, res.Error != nil, "expected missing managed plan file to be rejected")
 	Assert(t, strings.Contains(res.Error.Error(), "plan file is missing"), "got: %s", res.Error)
 	mockApply.VerifyWasCalled(Never()).Run(Any[command.ProjectContext](), Any[[]string](), Any[string](), Any[map[string]string]())
+}
+
+// conftestOutput is the JSON the built-in policy_check step returns for one
+// policy set.
+func conftestOutput(t *testing.T, name, output string, passed bool, itemRegex string) string {
+	t.Helper()
+	r, err := models.NewPolicySetResult(name, output, passed, 1, itemRegex)
+	Ok(t, err)
+	b, err := json.Marshal([]models.PolicySetResult{*r})
+	Ok(t, err)
+	return string(b)
 }

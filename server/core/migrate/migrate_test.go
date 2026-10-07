@@ -15,7 +15,8 @@ import (
 	. "github.com/runatlantis/atlantis/testing"
 )
 
-const fixtures = "../../controllers/events/testdata/test-repos"
+// fixtures holds copies of e2e fixtures as they were before migration.
+const fixtures = "testdata"
 
 func read(t *testing.T, path string) []byte {
 	b, err := os.ReadFile(filepath.Join(fixtures, path))

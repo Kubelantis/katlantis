@@ -4629,9 +4629,9 @@ func TestDefaultProjectCommandBuilder_WithPolicyCheckEnabled_BuildAutoplanComman
 	planCtx := ctxs[0]
 	policyCheckCtx := ctxs[1]
 	Equals(t, command.Plan, planCtx.CommandName)
-	Equals(t, globalCfg.Workflows["default"].Plan.Steps, planCtx.Steps)
+	Equals(t, valid.NativeWorkflow().Plan.Steps, planCtx.Steps)
 	Equals(t, command.PolicyCheck, policyCheckCtx.CommandName)
-	Equals(t, globalCfg.Workflows["default"].PolicyCheck.Steps, policyCheckCtx.Steps)
+	Equals(t, valid.NativeWorkflow().PolicyCheck.Steps, policyCheckCtx.Steps)
 }
 
 // Test building version command for multiple projects

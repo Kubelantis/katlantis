@@ -6,11 +6,8 @@ policies:
     - name: test_policy
       path: policies/policy.rego
       source: local
-workflows:
-  default:
-    policy_check:
-      steps:
-        - show
-        - policy_check:
-            extra_args: ["--all-namespaces"]
-        
+repos:
+  - id: /.*/
+    inputs:
+      extra_args:
+        policy_check: [--all-namespaces]

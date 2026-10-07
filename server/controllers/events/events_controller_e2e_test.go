@@ -1008,23 +1008,6 @@ func TestGitHubWorkflowWithPolicyCheck(t *testing.T) {
 			},
 		},
 		{
-			Description:     "failing policy without policies passing and custom run steps",
-			RepoDir:         "policy-checks-custom-run-steps",
-			ModifiedFiles:   []string{"main.tf"},
-			PolicyCheck:     true,
-			ExpAutoplan:     true,
-			ExpPolicyChecks: true,
-			Comments: []string{
-				"atlantis apply",
-			},
-			ExpReplies: [][]string{
-				{"exp-output-autoplan.txt"},
-				{"exp-output-auto-policy-check.txt"},
-				{"exp-output-apply-failed.txt"},
-				{"exp-output-merge.txt"},
-			},
-		},
-		{
 			Description:     "failing policy additional apply requirements specified",
 			RepoDir:         "policy-checks-apply-reqs",
 			ModifiedFiles:   []string{"main.tf"},
@@ -1193,23 +1176,6 @@ func TestGitHubWorkflowWithPolicyCheck(t *testing.T) {
 			},
 			ExpReplies: [][]string{
 				{"exp-output-autoplan.txt"},
-				{"exp-output-apply.txt"},
-				{"exp-output-merge.txt"},
-			},
-		},
-		{
-			Description:     "custom policy check with multiple policy sets - no duplicate output",
-			RepoDir:         "policy-checks-custom-policy-check",
-			ModifiedFiles:   []string{"main.tf"},
-			PolicyCheck:     true,
-			ExpAutoplan:     true,
-			ExpPolicyChecks: true,
-			Comments: []string{
-				"atlantis apply",
-			},
-			ExpReplies: [][]string{
-				{"exp-output-autoplan.txt"},
-				{"exp-output-auto-policy-check.txt"},
 				{"exp-output-apply.txt"},
 				{"exp-output-merge.txt"},
 			},
@@ -1544,15 +1510,9 @@ func setupE2E(t *testing.T, repoDir string, opt setupOption) (events_controllers
 		},
 		ImportStepRunner:  runtime.NewImportStepRunner(terraformClient, defaultTFDistribution, defaultTFVersion, &runtime.LocalPlanStore{}),
 		StateRmStepRunner: runtime.NewStateRmStepRunner(terraformClient, defaultTFDistribution, defaultTFVersion, &runtime.LocalPlanStore{}),
-		RunStepRunner: &runtime.RunStepRunner{
-			TerraformExecutor:       terraformClient,
-			DefaultTFDistribution:   defaultTFDistribution,
-			DefaultTFVersion:        defaultTFVersion,
-			ProjectCmdOutputHandler: projectCmdOutputHandler,
-		},
-		WorkingDir:       workingDir,
-		Webhooks:         &mockWebhookSender{},
-		WorkingDirLocker: locker,
+		WorkingDir:        workingDir,
+		Webhooks:          &mockWebhookSender{},
+		WorkingDirLocker:  locker,
 		CommandRequirementHandler: &events.DefaultCommandRequirementHandler{
 			WorkingDir:            workingDir,
 			PlanRiskMaxUnapproved: opt.planRiskMaxUnapproved,

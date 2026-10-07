@@ -14,6 +14,9 @@ import (
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 )
 
+// RunStepName is the key of a hook's command.
+const RunStepName = "run"
+
 // WorkflowHook represents a single action/command to perform. In YAML,
 // it can be set as
 // A map for a custom run commands:

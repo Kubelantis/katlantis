@@ -16,12 +16,12 @@ import (
 
 // GlobalCfg is the raw schema for server-side repo config.
 type GlobalCfg struct {
-	Repos          []Repo              `yaml:"repos" json:"repos"`
-	Workflows      map[string]Workflow `yaml:"workflows" json:"workflows"`
-	PolicySets     PolicySets          `yaml:"policies" json:"policies"`
-	Metrics        Metrics             `yaml:"metrics" json:"metrics"`
-	TeamAuthz      TeamAuthz           `yaml:"team_authz" json:"team_authz"`
-	ExternalStores ExternalStores      `yaml:"external_stores" json:"external_stores"`
+	Repos          []Repo         `yaml:"repos" json:"repos"`
+	Workflows      Removed        `yaml:"workflows,omitempty" json:"workflows,omitempty"`
+	PolicySets     PolicySets     `yaml:"policies" json:"policies"`
+	Metrics        Metrics        `yaml:"metrics" json:"metrics"`
+	TeamAuthz      TeamAuthz      `yaml:"team_authz" json:"team_authz"`
+	ExternalStores ExternalStores `yaml:"external_stores" json:"external_stores"`
 }
 
 // ExternalStores is the raw schema for external storage backends.
@@ -124,16 +124,16 @@ type Repo struct {
 	ApplyRequirements         []string       `yaml:"apply_requirements" json:"apply_requirements"`
 	ImportRequirements        []string       `yaml:"import_requirements" json:"import_requirements"`
 	PreWorkflowHooks          []WorkflowHook `yaml:"pre_workflow_hooks" json:"pre_workflow_hooks"`
-	Workflow                  *string        `yaml:"workflow,omitempty" json:"workflow,omitempty"`
+	Workflow                  Removed        `yaml:"workflow,omitempty" json:"workflow,omitempty"`
 	PostWorkflowHooks         []WorkflowHook `yaml:"post_workflow_hooks" json:"post_workflow_hooks"`
-	AllowedWorkflows          []string       `yaml:"allowed_workflows,omitempty" json:"allowed_workflows,omitempty"`
+	AllowedWorkflows          Removed        `yaml:"allowed_workflows,omitempty" json:"allowed_workflows,omitempty"`
 	AllowedOverrides          []string       `yaml:"allowed_overrides" json:"allowed_overrides"`
-	AllowCustomWorkflows      *bool          `yaml:"allow_custom_workflows,omitempty" json:"allow_custom_workflows,omitempty"`
+	AllowCustomWorkflows      Removed        `yaml:"allow_custom_workflows,omitempty" json:"allow_custom_workflows,omitempty"`
 	DeleteSourceBranchOnMerge *bool          `yaml:"delete_source_branch_on_merge,omitempty" json:"delete_source_branch_on_merge,omitempty"`
 	RepoLocking               *bool          `yaml:"repo_locking,omitempty" json:"repo_locking,omitempty"`
 	RepoLocks                 *RepoLocks     `yaml:"repo_locks,omitempty" json:"repo_locks,omitempty"`
 	PolicyCheck               *bool          `yaml:"policy_check,omitempty" json:"policy_check,omitempty"`
-	CustomPolicyCheck         *bool          `yaml:"custom_policy_check,omitempty" json:"custom_policy_check,omitempty"`
+	CustomPolicyCheck         Removed        `yaml:"custom_policy_check,omitempty" json:"custom_policy_check,omitempty"`
 	AutoDiscover              *AutoDiscover  `yaml:"autodiscover,omitempty" json:"autodiscover,omitempty"`
 	SilencePRComments         []string       `yaml:"silence_pr_comments,omitempty" json:"silence_pr_comments,omitempty"`
 	Inputs                    *Inputs        `yaml:"inputs,omitempty" json:"inputs,omitempty"`
@@ -141,9 +141,11 @@ type Repo struct {
 }
 
 func (g GlobalCfg) Validate() error {
+	if err := removedKeys(map[string]Removed{"workflows": g.Workflows}); err != nil {
+		return err
+	}
 	err := validation.ValidateStruct(&g,
 		validation.Field(&g.Repos),
-		validation.Field(&g.Workflows),
 		validation.Field(&g.Metrics),
 	)
 	if err != nil {
@@ -152,51 +154,6 @@ func (g GlobalCfg) Validate() error {
 
 	if err := g.ExternalStores.Validate(); err != nil {
 		return err
-	}
-
-	// Check that all workflows referenced by repos are actually defined.
-	for _, repo := range g.Repos {
-		if repo.Workflow == nil {
-			continue
-		}
-		name := *repo.Workflow
-		if name == valid.DefaultWorkflowName {
-			// The 'default' workflow will always be defined.
-			continue
-		}
-		found := false
-		for w := range g.Workflows {
-			if w == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("workflow %q is not defined", name)
-		}
-	}
-
-	// Check that all allowed workflows are defined
-	for _, repo := range g.Repos {
-		if repo.AllowedWorkflows == nil {
-			continue
-		}
-		for _, name := range repo.AllowedWorkflows {
-			if name == valid.DefaultWorkflowName {
-				// The 'default' workflow will always be defined.
-				continue
-			}
-			found := false
-			for w := range g.Workflows {
-				if w == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("workflow %q is not defined", name)
-			}
-		}
 	}
 
 	// Validate supported SilencePRComments values.
@@ -220,7 +177,6 @@ func (g GlobalCfg) Validate() error {
 }
 
 func (g GlobalCfg) ToValid(defaultCfg valid.GlobalCfg) valid.GlobalCfg {
-	workflows := make(map[string]valid.Workflow)
 
 	// assumes: globalcfg is always initialized with one repo .*
 	globalPlanReqs := defaultCfg.Repos[0].PlanRequirements
@@ -235,32 +191,14 @@ func (g GlobalCfg) ToValid(defaultCfg valid.GlobalCfg) valid.GlobalCfg {
 	}
 	globalImportReqs := defaultCfg.Repos[0].ImportRequirements
 
-	for k, v := range g.Workflows {
-		validatedWorkflow := v.ToValid(k)
-		workflows[k] = validatedWorkflow
-		if k == valid.DefaultWorkflowName {
-			// Handle the special case where they're redefining the default
-			// workflow. In this case, our default repo config references
-			// the "old" default workflow and so needs to be redefined.
-			defaultCfg.Repos[0].Workflow = &validatedWorkflow
-		}
-	}
-	// Merge in defaults without overriding.
-	for k, v := range defaultCfg.Workflows {
-		if _, ok := workflows[k]; !ok {
-			workflows[k] = v
-		}
-	}
-
 	var repos []valid.Repo
 	for _, r := range g.Repos {
-		repos = append(repos, r.ToValid(workflows, globalPlanReqs, globalApplyReqs, globalImportReqs))
+		repos = append(repos, r.ToValid(globalPlanReqs, globalApplyReqs, globalImportReqs))
 	}
 	repos = append(defaultCfg.Repos, repos...)
 
 	return valid.GlobalCfg{
 		Repos:          repos,
-		Workflows:      workflows,
 		PolicySets:     g.PolicySets.ToValid(),
 		Metrics:        g.Metrics.ToValid(),
 		TeamAuthz:      g.TeamAuthz.ToValid(),
@@ -325,16 +263,13 @@ func (r Repo) Validate() error {
 	overridesValid := func(value any) error {
 		overrides := value.([]string)
 		for _, o := range overrides {
-			if o != valid.PlanRequirementsKey && o != valid.ApplyRequirementsKey && o != valid.ImportRequirementsKey && o != valid.WorkflowKey && o != valid.DeleteSourceBranchOnMergeKey && o != valid.RepoLockingKey && o != valid.RepoLocksKey && o != valid.PolicyCheckKey && o != valid.CustomPolicyCheckKey && o != valid.SilencePRCommentsKey && o != valid.InputsKey && o != valid.ToolKey {
-				return fmt.Errorf("%q is not a valid override, only %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, and %q are supported", o, valid.PlanRequirementsKey, valid.ApplyRequirementsKey, valid.ImportRequirementsKey, valid.WorkflowKey, valid.DeleteSourceBranchOnMergeKey, valid.RepoLockingKey, valid.RepoLocksKey, valid.PolicyCheckKey, valid.CustomPolicyCheckKey, valid.SilencePRCommentsKey, valid.InputsKey, valid.ToolKey)
+			if o == "workflow" || o == "custom_policy_check" {
+				return fmt.Errorf("%q can no longer be overridden: %s; %s", o, removedReplacement[o], MigrateHint)
+			}
+			if !slices.Contains(valid.OverridableKeys, o) {
+				return fmt.Errorf("%q is not a valid override, only %s are supported", o, quotedList(valid.OverridableKeys))
 			}
 		}
-		return nil
-	}
-
-	workflowExists := func(value any) error {
-		// We validate workflows in ParserValidator.validateRepoWorkflows
-		// because we need the list of workflows to validate.
 		return nil
 	}
 
@@ -359,6 +294,14 @@ func (r Repo) Validate() error {
 		return nil
 	}
 
+	if err := removedKeys(map[string]Removed{
+		"workflow":               r.Workflow,
+		"allowed_workflows":      r.AllowedWorkflows,
+		"allow_custom_workflows": r.AllowCustomWorkflows,
+		"custom_policy_check":    r.CustomPolicyCheck,
+	}); err != nil {
+		return err
+	}
 	return validation.ValidateStruct(&r,
 		validation.Field(&r.ID, validation.Required, validation.By(idValid)),
 		validation.Field(&r.Branch, validation.By(branchValid)),
@@ -367,7 +310,6 @@ func (r Repo) Validate() error {
 		validation.Field(&r.PlanRequirements, validation.By(validPlanReq)),
 		validation.Field(&r.ApplyRequirements, validation.By(validApplyReq)),
 		validation.Field(&r.ImportRequirements, validation.By(validImportReq)),
-		validation.Field(&r.Workflow, validation.By(workflowExists)),
 		validation.Field(&r.DeleteSourceBranchOnMerge, validation.By(deleteSourceBranchOnMergeValid)),
 		validation.Field(&r.AutoDiscover, validation.By(autoDiscoverValid)),
 		validation.Field(&r.RepoLocks, validation.By(repoLocksValid)),
@@ -376,7 +318,7 @@ func (r Repo) Validate() error {
 	)
 }
 
-func (r Repo) ToValid(workflows map[string]valid.Workflow, globalPlanReqs []string, globalApplyReqs []string, globalImportReqs []string) valid.Repo {
+func (r Repo) ToValid(globalPlanReqs []string, globalApplyReqs []string, globalImportReqs []string) valid.Repo {
 	var id string
 	var idRegex *regexp.Regexp
 	if r.HasRegexID() {
@@ -392,14 +334,6 @@ func (r Repo) ToValid(workflows map[string]valid.Workflow, globalPlanReqs []stri
 		withoutSlashes := r.Branch[1 : len(r.Branch)-1]
 		// Safe to use MustCompile because we test it in Validate().
 		branchRegex = regexp.MustCompile(withoutSlashes)
-	}
-
-	var workflow *valid.Workflow
-	if r.Workflow != nil {
-		// This key is guaranteed to exist because we test for it in
-		// ParserValidator.validateRepoWorkflows.
-		ptr := workflows[*r.Workflow]
-		workflow = &ptr
 	}
 
 	var preWorkflowHooks []*valid.WorkflowHook
@@ -486,19 +420,27 @@ OuterGlobalImportReqs:
 		ApplyRequirements:         mergedApplyReqs,
 		ImportRequirements:        mergedImportReqs,
 		PreWorkflowHooks:          preWorkflowHooks,
-		Workflow:                  workflow,
 		PostWorkflowHooks:         postWorkflowHooks,
-		AllowedWorkflows:          r.AllowedWorkflows,
 		AllowedOverrides:          r.AllowedOverrides,
-		AllowCustomWorkflows:      r.AllowCustomWorkflows,
 		DeleteSourceBranchOnMerge: r.DeleteSourceBranchOnMerge,
 		RepoLocking:               r.RepoLocking,
 		RepoLocks:                 repoLocks,
 		PolicyCheck:               r.PolicyCheck,
-		CustomPolicyCheck:         r.CustomPolicyCheck,
 		AutoDiscover:              autoDiscover,
 		SilencePRComments:         r.SilencePRComments,
 		Inputs:                    r.Inputs.ToValid(),
 		Tool:                      r.Tool,
 	}
+}
+
+// quotedList renders keys as "a", "b", and "c".
+func quotedList(keys []string) string {
+	q := make([]string, len(keys))
+	for i, k := range keys {
+		q[i] = fmt.Sprintf("%q", k)
+	}
+	if len(q) < 2 {
+		return strings.Join(q, "")
+	}
+	return strings.Join(q[:len(q)-1], ", ") + ", and " + q[len(q)-1]
 }

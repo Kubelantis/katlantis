@@ -39,14 +39,6 @@ func TestConfig_FindProjectsByDir(t *testing.T) {
 						ApplyRequirements: []string{"approved"},
 					},
 				},
-				Workflows: map[string]valid.Workflow{
-					"myworkflow": {
-						Name:        "myworkflow",
-						Apply:       valid.DefaultApplyStage,
-						Plan:        valid.DefaultPlanStage,
-						PolicyCheck: valid.DefaultPolicyCheckStage,
-					},
-				},
 				AllowedRegexpPrefixes: []string{"dev", "staging"},
 			},
 			expProjects: []valid.Project{
@@ -92,14 +84,6 @@ func TestConfig_FindProjectsByDir(t *testing.T) {
 						ApplyRequirements: []string{"approved"},
 					},
 				},
-				Workflows: map[string]valid.Workflow{
-					"myworkflow": {
-						Name:        "myworkflow",
-						Apply:       valid.DefaultApplyStage,
-						Plan:        valid.DefaultPlanStage,
-						PolicyCheck: valid.DefaultPolicyCheckStage,
-					},
-				},
 				AllowedRegexpPrefixes: []string{"dev", "staging"},
 			},
 			expProjects: nil,
@@ -131,14 +115,6 @@ func TestConfig_FindProjectsByDir(t *testing.T) {
 							Enabled:      false,
 						},
 						ApplyRequirements: []string{"approved"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"myworkflow": {
-						Name:        "myworkflow",
-						Apply:       valid.DefaultApplyStage,
-						Plan:        valid.DefaultPlanStage,
-						PolicyCheck: valid.DefaultPolicyCheckStage,
 					},
 				},
 				AllowedRegexpPrefixes: nil,
@@ -184,14 +160,6 @@ func TestConfig_FindProjectsByDir(t *testing.T) {
 							Enabled:      false,
 						},
 						ApplyRequirements: []string{"approved"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"myworkflow": {
-						Name:        "myworkflow",
-						Apply:       valid.DefaultApplyStage,
-						Plan:        valid.DefaultPlanStage,
-						PolicyCheck: valid.DefaultPolicyCheckStage,
 					},
 				},
 				AllowedRegexpPrefixes: []string{"dev", "staging"},

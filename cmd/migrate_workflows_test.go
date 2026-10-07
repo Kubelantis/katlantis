@@ -56,3 +56,20 @@ func TestMigrateWorkflowsNeedsAFile(t *testing.T) {
 	c.SetArgs(nil)
 	ErrContains(t, "pass --repos-yaml, --atlantis-yaml, or both", c.Execute())
 }
+
+// The API key must never appear in help output, which is often pasted into
+// issues and logs.
+func TestMigrateWorkflowsHelpDoesNotPrintAPIKey(t *testing.T) {
+	const secret = "ts-test-secret-value"
+	t.Setenv("ATLANTIS_TYPESAFE_API_KEY", secret)
+	t.Setenv("TYPESAFE_API_KEY", secret)
+	var stdout, stderr bytes.Buffer
+	c := (&MigrateWorkflowsCmd{Stdout: &stdout, Stderr: &stderr}).Init()
+	c.SetOut(&stdout)
+	c.SetErr(&stderr)
+	c.SetArgs([]string{"--help"})
+	Ok(t, c.Execute())
+	out := stdout.String() + stderr.String()
+	Assert(t, strings.Contains(out, "typesafe-api-key"), "help should list the flag:\n%s", out)
+	Assert(t, !strings.Contains(out, secret), "help printed the API key")
+}

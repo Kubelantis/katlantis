@@ -20,7 +20,6 @@ type RepoCfg struct {
 	// Version is the version of the atlantis YAML file.
 	Version                   int
 	Projects                  []Project
-	Workflows                 map[string]Workflow
 	PolicySets                PolicySets
 	Automerge                 *bool
 	AutoDiscover              *AutoDiscover
@@ -29,7 +28,6 @@ type RepoCfg struct {
 	ParallelPolicyCheck       *bool
 	DeleteSourceBranchOnMerge *bool
 	RepoLocks                 *RepoLocks
-	CustomPolicyCheck         *bool
 	EmojiReaction             string
 	AllowedRegexpPrefixes     []string
 	AbortOnExecutionOrderFail bool
@@ -183,7 +181,6 @@ type Project struct {
 	BranchRegex               *regexp.Regexp
 	Workspace                 string
 	Name                      *string
-	WorkflowName              *string
 	TerraformDistribution     *string
 	TerraformVersion          *version.Version
 	Autoplan                  Autoplan
@@ -196,7 +193,6 @@ type Project struct {
 	RepoLocks                 *RepoLocks
 	ExecutionOrderGroup       int
 	PolicyCheck               *bool
-	CustomPolicyCheck         *bool
 	SilencePRComments         []string
 	// Inputs override the server-side inputs when allowed.
 	Inputs *Inputs
@@ -220,16 +216,6 @@ type Autoplan struct {
 	Enabled      bool
 }
 
-// PostProcessRunOutputOption is an enum of options for post-processing RunCommand output
-type PostProcessRunOutputOption string
-
-const (
-	PostProcessRunOutputShow            = "show"
-	PostProcessRunOutputHide            = "hide"
-	PostProcessRunOutputStripRefreshing = "strip_refreshing"
-	PostProcessRunOutputFilterRegexKey  = "filter_regex"
-)
-
 type Stage struct {
 	Steps []Step
 }
@@ -244,25 +230,10 @@ func (s CommandShell) String() string {
 	return fmt.Sprintf("%s %s", s.Shell, strings.Join(s.ShellArgs, " "))
 }
 
+// Step is one built-in step of the native workflow, such as init or plan.
 type Step struct {
 	StepName  string
 	ExtraArgs []string
-	// RunCommand is either a custom run step or the command to run
-	// during an env step to populate the environment variable dynamically.
-	RunCommand string
-	// Output includes the options for post-processing a RunCommand output
-	// these will be executed in the received order
-	Output []PostProcessRunOutputOption
-	// EnvVarName is the name of the
-	// environment variable that should be set by this step.
-	EnvVarName string
-	// EnvVarValue is the value to set EnvVarName to.
-	EnvVarValue string
-	// The Shell to use for RunCommand execution.
-	RunShell *CommandShell
-	// FilterRegex is a list of regexes for post-processing a RunCommand output
-	// these will be executed in the received order
-	FilterRegexes []*regexp.Regexp
 }
 
 type Workflow struct {

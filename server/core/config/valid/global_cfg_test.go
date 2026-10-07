@@ -77,18 +77,11 @@ func TestNewGlobalCfg(t *testing.T) {
 				PlanRequirements:          []string{},
 				ApplyRequirements:         []string{},
 				ImportRequirements:        []string{},
-				Workflow:                  &expDefaultWorkflow,
-				AllowedWorkflows:          []string{},
 				AllowedOverrides:          []string{},
-				AllowCustomWorkflows:      Bool(false),
 				DeleteSourceBranchOnMerge: Bool(false),
 				RepoLocks:                 &valid.DefaultRepoLocks,
 				PolicyCheck:               Bool(false),
-				CustomPolicyCheck:         Bool(false),
 			},
-		},
-		Workflows: map[string]valid.Workflow{
-			"default": expDefaultWorkflow,
 		},
 		TeamAuthz: valid.TeamAuthz{
 			Args: make([]string, 0),
@@ -117,6 +110,8 @@ func TestNewGlobalCfg(t *testing.T) {
 		},
 	}
 
+	Equals(t, expDefaultWorkflow, valid.NativeWorkflow())
+
 	for _, c := range cases {
 		caseName := fmt.Sprintf("allow_repo: %t, policy_check: %t", c.allowAllRepoSettings, c.policyCheckEnabled)
 		t.Run(caseName, func(t *testing.T) {
@@ -132,8 +127,7 @@ func TestNewGlobalCfg(t *testing.T) {
 			exp.Repos[0].BranchRegex = regexp.MustCompile(".*")
 
 			if c.allowAllRepoSettings {
-				exp.Repos[0].AllowCustomWorkflows = Bool(true)
-				exp.Repos[0].AllowedOverrides = []string{"plan_requirements", "apply_requirements", "import_requirements", "workflow", "delete_source_branch_on_merge", "repo_locking", "repo_locks", "policy_check", "silence_pr_comments", "inputs", "tool"}
+				exp.Repos[0].AllowedOverrides = []string{"plan_requirements", "apply_requirements", "import_requirements", "delete_source_branch_on_merge", "repo_locking", "repo_locks", "policy_check", "silence_pr_comments", "inputs", "tool"}
 			}
 			if c.policyCheckEnabled {
 				exp.Repos[0].ApplyRequirements = append(exp.Repos[0].ApplyRequirements, "policies_passed")
@@ -165,283 +159,6 @@ func TestGlobalCfg_ValidateRepoCfg(t *testing.T) {
 		repoID string
 		expErr string
 	}{
-		"repo uses workflow that is defined server side but not allowed (with custom workflows)": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: true,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(true),
-						AllowedOverrides:     []string{"workflow"},
-						AllowedWorkflows:     []string{"allowed"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"allowed":   {},
-					"forbidden": {},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("forbidden"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "workflow 'forbidden' is not allowed for this repo",
-		},
-		"repo uses workflow that is defined server side but not allowed (without custom workflows)": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: true,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(false),
-						AllowedOverrides:     []string{"workflow"},
-						AllowedWorkflows:     []string{"allowed"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"allowed":   {},
-					"forbidden": {},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("forbidden"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "workflow 'forbidden' is not allowed for this repo",
-		},
-		"repo uses workflow that is defined in both places with same name (without custom workflows)": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: true,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(false),
-						AllowedOverrides:     []string{"workflow"},
-						AllowedWorkflows:     []string{"duplicated"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"duplicated": {},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("duplicated"),
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"duplicated": {},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "repo config not allowed to define custom workflows: server-side config needs 'allow_custom_workflows: true'",
-		},
-		"repo uses workflow that is defined repo side, but not allowed (with custom workflows)": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: true,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(true),
-						AllowedOverrides:     []string{"workflow"},
-						AllowedWorkflows:     []string{"none"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"forbidden": {},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("repodefined"),
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"repodefined": {},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
-		"repo uses workflow that is defined server side and allowed (without custom workflows)": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: true,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(false),
-						AllowedOverrides:     []string{"workflow"},
-						AllowedWorkflows:     []string{"allowed"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"allowed":   {},
-					"forbidden": {},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("allowed"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
-		"repo uses workflow that is defined server side and allowed (with custom workflows)": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: true,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(true),
-						AllowedOverrides:     []string{"workflow"},
-						AllowedWorkflows:     []string{"allowed"},
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"allowed":   {},
-					"forbidden": {},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("allowed"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
-		"workflow not allowed": {
-			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-				AllowAllRepoSettings: false,
-			}),
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						WorkflowName: String("invalid"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "repo config not allowed to set 'workflow' key: server-side config needs 'allowed_overrides: [workflow]'",
-		},
-		"custom workflows not allowed": {
-			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-				AllowAllRepoSettings: false,
-			}),
-			rCfg: valid.RepoCfg{
-				Workflows: map[string]valid.Workflow{
-					"custom": {},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "repo config not allowed to define custom workflows: server-side config needs 'allow_custom_workflows: true'",
-		},
-		"custom workflows allowed": {
-			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-				AllowAllRepoSettings: true,
-			}),
-			rCfg: valid.RepoCfg{
-				Workflows: map[string]valid.Workflow{
-					"custom": {},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
-		"repo uses custom workflow defined on repo": {
-			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-				AllowAllRepoSettings: true,
-			}),
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("repodefined"),
-					},
-				},
-				Workflows: map[string]valid.Workflow{
-					"repodefined": {},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
-		"custom workflows allowed for this repo only": {
-			gCfg: valid.GlobalCfg{
-				Repos: []valid.Repo{
-					valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-						AllowAllRepoSettings: false,
-					}).Repos[0],
-					{
-						ID:                   "github.com/owner/repo",
-						AllowCustomWorkflows: Bool(true),
-					},
-				},
-			},
-			rCfg: valid.RepoCfg{
-				Workflows: map[string]valid.Workflow{
-					"custom": {},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
-		"repo uses global workflow": {
-			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-				AllowAllRepoSettings: true,
-			}),
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("default"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "",
-		},
 		"plan_reqs not allowed": {
 			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
 				AllowAllRepoSettings: false,
@@ -490,22 +207,6 @@ func TestGlobalCfg_ValidateRepoCfg(t *testing.T) {
 			repoID: "github.com/owner/repo",
 			expErr: "repo config not allowed to set 'import_requirements' key: server-side config needs 'allowed_overrides: [import_requirements]'",
 		},
-		"repo workflow doesn't exist": {
-			gCfg: valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{
-				AllowAllRepoSettings: true,
-			}),
-			rCfg: valid.RepoCfg{
-				Projects: []valid.Project{
-					{
-						Dir:          ".",
-						Workspace:    "default",
-						WorkflowName: String("doesntexist"),
-					},
-				},
-			},
-			repoID: "github.com/owner/repo",
-			expErr: "workflow \"doesntexist\" is not defined anywhere",
-		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -539,9 +240,8 @@ policies:
 `,
 			repoID: "github.com/owner/repo",
 			proj: valid.Project{
-				Dir:          ".",
-				Workspace:    "default",
-				WorkflowName: String("custom"),
+				Dir:       ".",
+				Workspace: "default",
 			},
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
@@ -570,12 +270,11 @@ policies:
 						},
 					},
 				},
-				RepoRelDir:        ".",
-				Workspace:         "default",
-				Name:              "",
-				AutoplanEnabled:   false,
-				RepoLocks:         valid.DefaultRepoLocks,
-				CustomPolicyCheck: false,
+				RepoRelDir:      ".",
+				Workspace:       "default",
+				Name:            "",
+				AutoplanEnabled: false,
+				RepoLocks:       valid.DefaultRepoLocks,
 			},
 		},
 		"policies set correct version if specified": {
@@ -591,9 +290,8 @@ policies:
 `,
 			repoID: "github.com/owner/repo",
 			proj: valid.Project{
-				Dir:          ".",
-				Workspace:    "default",
-				WorkflowName: String("custom"),
+				Dir:       ".",
+				Workspace: "default",
 			},
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
@@ -622,12 +320,11 @@ policies:
 						},
 					},
 				},
-				RepoRelDir:        ".",
-				Workspace:         "default",
-				Name:              "",
-				AutoplanEnabled:   false,
-				RepoLocks:         valid.DefaultRepoLocks,
-				CustomPolicyCheck: false,
+				RepoRelDir:      ".",
+				Workspace:       "default",
+				Name:            "",
+				AutoplanEnabled: false,
+				RepoLocks:       valid.DefaultRepoLocks,
 			},
 		},
 	}
@@ -670,56 +367,11 @@ func TestGlobalCfg_MergeProjectCfg(t *testing.T) {
 		StateRm:     valid.DefaultStateRmStage,
 	}
 	cases := map[string]struct {
-		gCfg          string
-		repoID        string
-		proj          valid.Project
-		repoWorkflows map[string]valid.Workflow
-		exp           valid.MergedProjectCfg
+		gCfg   string
+		repoID string
+		proj   valid.Project
+		exp    valid.MergedProjectCfg
 	}{
-		"repos can use server-side defined workflow if allowed": {
-			gCfg: `
-repos:
-- id: /.*/
-  allowed_overrides: [workflow]
-workflows:
-  custom:
-    plan:
-      steps: [plan]`,
-			repoID: "github.com/owner/repo",
-			proj: valid.Project{
-				Dir:          ".",
-				Workspace:    "default",
-				WorkflowName: String("custom"),
-			},
-			repoWorkflows: nil,
-			exp: valid.MergedProjectCfg{
-				Tool:               "terraform",
-				PlanRequirements:   []string{},
-				ApplyRequirements:  []string{},
-				ImportRequirements: []string{},
-				Workflow: valid.Workflow{
-					Name:        "custom",
-					Apply:       valid.DefaultApplyStage,
-					PolicyCheck: valid.DefaultPolicyCheckStage,
-					Plan: valid.Stage{
-						Steps: []valid.Step{
-							{
-								StepName: "plan",
-							},
-						},
-					},
-					Import:  valid.DefaultImportStage,
-					StateRm: valid.DefaultStateRmStage,
-				},
-				RepoRelDir:        ".",
-				Workspace:         "default",
-				Name:              "",
-				AutoplanEnabled:   false,
-				PolicySets:        emptyPolicySets,
-				RepoLocks:         valid.DefaultRepoLocks,
-				CustomPolicyCheck: false,
-			},
-		},
 		"repo-side plan reqs win out if allowed": {
 			gCfg: `
 repos:
@@ -735,7 +387,6 @@ repos:
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"mergeable"},
@@ -748,7 +399,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"repo-side apply reqs win out if allowed": {
@@ -766,7 +416,6 @@ repos:
 				ApplyRequirements:  []string{"mergeable"},
 				ImportRequirements: []string{},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{},
@@ -779,7 +428,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"repo-side apply reqs should include non-overridable 'policies_passed' req when overridden and policies enabled": {
@@ -798,7 +446,6 @@ repos:
 				ApplyRequirements:  []string{"mergeable"},
 				ImportRequirements: []string{},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{},
@@ -811,7 +458,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 				PolicyCheck:        true,
 			},
 		},
@@ -831,7 +477,6 @@ repos:
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"mergeable"},
@@ -844,7 +489,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 				PolicyCheck:        true,
 			},
 		},
@@ -863,7 +507,6 @@ repos:
 				ApplyRequirements:  []string{"mergeable"},
 				ImportRequirements: []string{},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{},
@@ -876,7 +519,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 				PolicyCheck:        false,
 			},
 		},
@@ -895,7 +537,6 @@ repos:
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{"mergeable"},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{},
@@ -908,7 +549,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"repo-side repo_locking win out if allowed": {
@@ -924,9 +564,7 @@ repos:
 				PlanRequirements:   []string{},
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
-				CustomPolicyCheck:  Bool(false),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{},
@@ -939,7 +577,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.RepoLocks{Mode: valid.RepoLocksDisabledMode},
-				CustomPolicyCheck:  false,
 			},
 		},
 		"repo-side repo_locks win out if allowed": {
@@ -957,9 +594,7 @@ repos:
 				ApplyRequirements:  []string{},
 				ImportRequirements: []string{},
 				RepoLocks:          &valid.DefaultRepoLocks,
-				CustomPolicyCheck:  Bool(false),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{},
@@ -972,7 +607,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.RepoLocks{Mode: valid.RepoLocksOnApplyMode},
-				CustomPolicyCheck:  false,
 			},
 		},
 		"last server-side match wins": {
@@ -997,7 +631,6 @@ repos:
 				Workspace: "myworkspace",
 				Name:      String("myname"),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
@@ -1010,7 +643,6 @@ repos:
 				AutoplanEnabled:    false,
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"autoplan is set properly": {
@@ -1025,7 +657,6 @@ repos:
 					Enabled:      true,
 				},
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:                 "terraform",
 				PlanRequirements:     []string{},
@@ -1039,7 +670,6 @@ repos:
 				AutoplanWhenModified: []string{".tf"},
 				PolicySets:           emptyPolicySets,
 				RepoLocks:            valid.DefaultRepoLocks,
-				CustomPolicyCheck:    false,
 			},
 		},
 		"execution order group is set": {
@@ -1055,7 +685,6 @@ repos:
 				},
 				ExecutionOrderGroup: 10,
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:                 "terraform",
 				PlanRequirements:     []string{},
@@ -1070,7 +699,6 @@ repos:
 				PolicySets:           emptyPolicySets,
 				ExecutionOrderGroup:  10,
 				RepoLocks:            valid.DefaultRepoLocks,
-				CustomPolicyCheck:    false,
 			},
 		},
 	}
@@ -1096,7 +724,7 @@ repos:
 			}
 
 			global.PolicySets = emptyPolicySets
-			Equals(t, c.exp, global.MergeProjectCfg(logging.NewNoopLogger(t), c.repoID, c.proj, valid.RepoCfg{Workflows: c.repoWorkflows}))
+			Equals(t, c.exp, global.MergeProjectCfg(logging.NewNoopLogger(t), c.repoID, c.proj, valid.RepoCfg{}))
 		})
 	}
 }
@@ -1267,12 +895,11 @@ func TestGlobalCfg_PolicyCheckOverride(t *testing.T) {
 		StateRm:     valid.DefaultStateRmStage,
 	}
 	cases := map[string]struct {
-		gPolicyCheck  bool
-		gCfg          string
-		repoID        string
-		proj          valid.Project
-		repoWorkflows map[string]valid.Workflow
-		exp           valid.MergedProjectCfg
+		gPolicyCheck bool
+		gCfg         string
+		repoID       string
+		proj         valid.Project
+		exp          valid.MergedProjectCfg
 	}{
 		"global policy check disabled": {
 			gPolicyCheck: false,
@@ -1298,7 +925,6 @@ repos:
 				Name:        String("myname"),
 				PolicyCheck: Bool(false),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
@@ -1312,7 +938,6 @@ repos:
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
 				PolicyCheck:        false,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"global policy check enabled": {
@@ -1339,7 +964,6 @@ repos:
 				Name:        String("myname"),
 				PolicyCheck: Bool(true),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
@@ -1353,7 +977,6 @@ repos:
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
 				PolicyCheck:        true,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"global policy check enabled except current repo": {
@@ -1381,7 +1004,6 @@ repos:
 				Name:        String("myname"),
 				PolicyCheck: Bool(false),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
@@ -1395,7 +1017,6 @@ repos:
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
 				PolicyCheck:        false,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"global policy check disabled and disabled on current repo": {
@@ -1423,7 +1044,6 @@ repos:
 				Name:        String("myname"),
 				PolicyCheck: Bool(false),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
@@ -1437,7 +1057,6 @@ repos:
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
 				PolicyCheck:        false,
-				CustomPolicyCheck:  false,
 			},
 		},
 		"global policy check disabled and enabled on current repo": {
@@ -1465,7 +1084,6 @@ repos:
 				Name:        String("myname"),
 				PolicyCheck: Bool(false),
 			},
-			repoWorkflows: nil,
 			exp: valid.MergedProjectCfg{
 				Tool:               "terraform",
 				PlanRequirements:   []string{"approved", "mergeable"},
@@ -1479,7 +1097,6 @@ repos:
 				PolicySets:         emptyPolicySets,
 				RepoLocks:          valid.DefaultRepoLocks,
 				PolicyCheck:        true, // Project will have policy check as true but since it is globally disable it wont actually run
-				CustomPolicyCheck:  false,
 			},
 		},
 	}
@@ -1499,7 +1116,7 @@ repos:
 			Ok(t, err)
 
 			global.PolicySets = emptyPolicySets
-			Equals(t, c.exp, global.MergeProjectCfg(logging.NewNoopLogger(t), c.repoID, c.proj, valid.RepoCfg{Workflows: c.repoWorkflows}))
+			Equals(t, c.exp, global.MergeProjectCfg(logging.NewNoopLogger(t), c.repoID, c.proj, valid.RepoCfg{}))
 		})
 	}
 }

@@ -26,27 +26,24 @@ func TestConfig_UnmarshalYAML(t *testing.T) {
 			description: "no data",
 			input:       "",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 		},
 		{
 			description: "yaml nil",
 			input:       "~",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 		},
 		{
 			description: "invalid key",
 			input:       "invalid: key",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 			expErr: "yaml: construct errors: line 1: field invalid not found in type raw.RepoCfg",
 		},
@@ -54,45 +51,32 @@ func TestConfig_UnmarshalYAML(t *testing.T) {
 			description: "version set to 2",
 			input:       "version: 2",
 			exp: raw.RepoCfg{
-				Version:   Int(2),
-				Projects:  nil,
-				Workflows: nil,
+				Version:  Int(2),
+				Projects: nil,
 			},
 		},
 		{
 			description: "version set to 3",
 			input:       "version: 3",
 			exp: raw.RepoCfg{
-				Version:   Int(3),
-				Projects:  nil,
-				Workflows: nil,
+				Version:  Int(3),
+				Projects: nil,
 			},
 		},
 		{
 			description: "projects key without value",
 			input:       "projects:",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
-			},
-		},
-		{
-			description: "workflows key without value",
-			input:       "workflows:",
-			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 		},
 		{
 			description: "projects with a map",
 			input:       "projects:\n  key: value",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 			expErr: "yaml: construct errors: line 2: cannot construct !!map into []raw.Project",
 		},
@@ -100,9 +84,8 @@ func TestConfig_UnmarshalYAML(t *testing.T) {
 			description: "projects with a scalar",
 			input:       "projects: value",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 			expErr: "yaml: construct errors: line 1: cannot construct !!str `value` into []raw.Project",
 		},
@@ -110,9 +93,8 @@ func TestConfig_UnmarshalYAML(t *testing.T) {
 			description: "automerge not a boolean",
 			input:       "version: 3\nautomerge: notabool",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 			expErr: "yaml: construct errors: line 2: cannot construct !!str `notabool` into bool",
 		},
@@ -120,9 +102,8 @@ func TestConfig_UnmarshalYAML(t *testing.T) {
 			description: "parallel apply not a boolean",
 			input:       "version: 3\nparallel_apply: notabool",
 			exp: raw.RepoCfg{
-				Version:   nil,
-				Projects:  nil,
-				Workflows: nil,
+				Version:  nil,
+				Projects: nil,
 			},
 			expErr: "yaml: construct errors: line 2: cannot construct !!str `notabool` into bool",
 		},
@@ -142,7 +123,6 @@ repo_locks:
 projects:
 - dir: mydir
   workspace: myworkspace
-  workflow: default
   terraform_version: v0.11.0
   autoplan:
     enabled: false
@@ -150,14 +130,6 @@ projects:
   apply_requirements: [mergeable]
   repo_locks:
     mode: disabled
-workflows:
-  default:
-    plan:
-      steps: []
-    policy_check:
-      steps: []
-    apply:
-     steps: []
 allowed_regexp_prefixes:
 - dev/
 - staging/`,
@@ -175,7 +147,6 @@ allowed_regexp_prefixes:
 					{
 						Dir:              String("mydir"),
 						Workspace:        String("myworkspace"),
-						Workflow:         String("default"),
 						TerraformVersion: String("v0.11.0"),
 						Autoplan: &raw.Autoplan{
 							WhenModified: []string{},
@@ -183,19 +154,6 @@ allowed_regexp_prefixes:
 						},
 						ApplyRequirements: []string{"mergeable"},
 						RepoLocks:         &raw.RepoLocks{Mode: &repoLocksDisabled},
-					},
-				},
-				Workflows: map[string]raw.Workflow{
-					"default": {
-						Apply: &raw.Stage{
-							Steps: []raw.Step{},
-						},
-						Plan: &raw.Stage{
-							Steps: []raw.Step{},
-						},
-						PolicyCheck: &raw.Stage{
-							Steps: []raw.Step{},
-						},
 					},
 				},
 				AllowedRegexpPrefixes: []string{"dev/", "staging/"},
@@ -262,8 +220,7 @@ func TestConfig_ToValid(t *testing.T) {
 			description: "nothing set",
 			input:       raw.RepoCfg{Version: Int(2)},
 			exp: valid.RepoCfg{
-				Version:   2,
-				Workflows: make(map[string]valid.Workflow),
+				Version: 2,
 			},
 		},
 		{
@@ -271,14 +228,12 @@ func TestConfig_ToValid(t *testing.T) {
 			input: raw.RepoCfg{
 				Version:      Int(2),
 				AutoDiscover: &raw.AutoDiscover{},
-				Workflows:    map[string]raw.Workflow{},
 				Projects:     []raw.Project{},
 				RepoLocks:    &raw.RepoLocks{},
 			},
 			exp: valid.RepoCfg{
 				Version:      2,
 				AutoDiscover: raw.DefaultAutoDiscover(),
-				Workflows:    map[string]valid.Workflow{},
 				Projects:     nil,
 				RepoLocks:    &valid.DefaultRepoLocks,
 			},
@@ -293,7 +248,6 @@ func TestConfig_ToValid(t *testing.T) {
 				Automerge:                 nil,
 				ParallelApply:             nil,
 				AbortOnExecutionOrderFail: false,
-				Workflows:                 map[string]valid.Workflow{},
 			},
 		},
 		{
@@ -309,7 +263,6 @@ func TestConfig_ToValid(t *testing.T) {
 				Automerge:                 Bool(true),
 				ParallelApply:             Bool(true),
 				AbortOnExecutionOrderFail: true,
-				Workflows:                 map[string]valid.Workflow{},
 			},
 		},
 		{
@@ -325,7 +278,6 @@ func TestConfig_ToValid(t *testing.T) {
 				Automerge:                 Bool(false),
 				ParallelApply:             Bool(false),
 				AbortOnExecutionOrderFail: false,
-				Workflows:                 map[string]valid.Workflow{},
 			},
 		},
 		{
@@ -334,8 +286,7 @@ func TestConfig_ToValid(t *testing.T) {
 				Version: Int(2),
 			},
 			exp: valid.RepoCfg{
-				Version:   2,
-				Workflows: map[string]valid.Workflow{},
+				Version: 2,
 			},
 		},
 		{
@@ -349,7 +300,6 @@ func TestConfig_ToValid(t *testing.T) {
 				AutoDiscover: &valid.AutoDiscover{
 					Mode: valid.AutoDiscoverEnabledMode,
 				},
-				Workflows: map[string]valid.Workflow{},
 			},
 		},
 		{
@@ -358,8 +308,7 @@ func TestConfig_ToValid(t *testing.T) {
 				Version: Int(2),
 			},
 			exp: valid.RepoCfg{
-				Version:   2,
-				Workflows: map[string]valid.Workflow{},
+				Version: 2,
 			},
 		},
 		{
@@ -372,37 +321,6 @@ func TestConfig_ToValid(t *testing.T) {
 				Version: 2,
 				RepoLocks: &valid.RepoLocks{
 					Mode: valid.RepoLocksOnApplyMode,
-				},
-				Workflows: map[string]valid.Workflow{},
-			},
-		},
-		{
-			description: "only plan stage set",
-			input: raw.RepoCfg{
-				Version: Int(2),
-				Workflows: map[string]raw.Workflow{
-					"myworkflow": {
-						Plan:        &raw.Stage{},
-						Apply:       nil,
-						PolicyCheck: nil,
-						Import:      nil,
-						StateRm:     nil,
-					},
-				},
-			},
-			exp: valid.RepoCfg{
-				Version:       2,
-				Automerge:     nil,
-				ParallelApply: nil,
-				Workflows: map[string]valid.Workflow{
-					"myworkflow": {
-						Name:        "myworkflow",
-						Plan:        valid.DefaultPlanStage,
-						PolicyCheck: valid.DefaultPolicyCheckStage,
-						Apply:       valid.DefaultApplyStage,
-						Import:      valid.DefaultImportStage,
-						StateRm:     valid.DefaultStateRmStage,
-					},
 				},
 			},
 		},
@@ -417,45 +335,6 @@ func TestConfig_ToValid(t *testing.T) {
 				},
 				RepoLocks: &raw.RepoLocks{
 					Mode: &repoLocksOnApply,
-				},
-				Workflows: map[string]raw.Workflow{
-					"myworkflow": {
-						Apply: &raw.Stage{
-							Steps: []raw.Step{
-								{
-									Key: String("apply"),
-								},
-							},
-						},
-						PolicyCheck: &raw.Stage{
-							Steps: []raw.Step{
-								{
-									Key: String("policy_check"),
-								},
-							},
-						},
-						Plan: &raw.Stage{
-							Steps: []raw.Step{
-								{
-									Key: String("init"),
-								},
-							},
-						},
-						Import: &raw.Stage{
-							Steps: []raw.Step{
-								{
-									Key: String("import"),
-								},
-							},
-						},
-						StateRm: &raw.Stage{
-							Steps: []raw.Step{
-								{
-									Key: String("state_rm"),
-								},
-							},
-						},
-					},
 				},
 				Projects: []raw.Project{
 					{
@@ -472,46 +351,6 @@ func TestConfig_ToValid(t *testing.T) {
 				},
 				RepoLocks: &valid.RepoLocks{
 					Mode: valid.RepoLocksOnApplyMode,
-				},
-				Workflows: map[string]valid.Workflow{
-					"myworkflow": {
-						Name: "myworkflow",
-						Apply: valid.Stage{
-							Steps: []valid.Step{
-								{
-									StepName: "apply",
-								},
-							},
-						},
-						PolicyCheck: valid.Stage{
-							Steps: []valid.Step{
-								{
-									StepName: "policy_check",
-								},
-							},
-						},
-						Plan: valid.Stage{
-							Steps: []valid.Step{
-								{
-									StepName: "init",
-								},
-							},
-						},
-						Import: valid.Stage{
-							Steps: []valid.Step{
-								{
-									StepName: "import",
-								},
-							},
-						},
-						StateRm: valid.Stage{
-							Steps: []valid.Step{
-								{
-									StepName: "state_rm",
-								},
-							},
-						},
-					},
 				},
 				Projects: []valid.Project{
 					{

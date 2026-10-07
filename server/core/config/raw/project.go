@@ -52,7 +52,7 @@ type Project struct {
 	Branch                    *string    `yaml:"branch,omitempty"`
 	Dir                       *string    `yaml:"dir,omitempty"`
 	Workspace                 *string    `yaml:"workspace,omitempty"`
-	Workflow                  *string    `yaml:"workflow,omitempty"`
+	Workflow                  Removed    `yaml:"workflow,omitempty"`
 	TerraformDistribution     *string    `yaml:"terraform_distribution,omitempty"`
 	TerraformVersion          *string    `yaml:"terraform_version,omitempty"`
 	Autoplan                  *Autoplan  `yaml:"autoplan,omitempty"`
@@ -65,7 +65,7 @@ type Project struct {
 	RepoLocks                 *RepoLocks `yaml:"repo_locks,omitempty"`
 	ExecutionOrderGroup       *int       `yaml:"execution_order_group,omitempty"`
 	PolicyCheck               *bool      `yaml:"policy_check,omitempty"`
-	CustomPolicyCheck         *bool      `yaml:"custom_policy_check,omitempty"`
+	CustomPolicyCheck         Removed    `yaml:"custom_policy_check,omitempty"`
 	SilencePRComments         []string   `yaml:"silence_pr_comments,omitempty"`
 	Inputs                    *Inputs    `yaml:"inputs,omitempty"`
 	Tool                      *string    `yaml:"tool,omitempty"`
@@ -158,6 +158,9 @@ func (p Project) Validate() error {
 		return errors.New("name: cannot be used with glob patterns in 'dir'; glob patterns expand to multiple projects which cannot share the same name")
 	}
 
+	if err := removedKeys(map[string]Removed{"workflow": p.Workflow, "custom_policy_check": p.CustomPolicyCheck}); err != nil {
+		return err
+	}
 	return validation.ValidateStruct(&p,
 		validation.Field(&p.Inputs),
 		validation.Field(&p.Tool, validation.By(toolValid)),
@@ -196,7 +199,6 @@ func (p Project) ToValid() valid.Project {
 		v.Workspace = *p.Workspace
 	}
 
-	v.WorkflowName = p.Workflow
 	if p.TerraformVersion != nil {
 		v.TerraformVersion, _ = version.NewVersion(*p.TerraformVersion)
 	}
@@ -236,10 +238,6 @@ func (p Project) ToValid() valid.Project {
 
 	if p.PolicyCheck != nil {
 		v.PolicyCheck = p.PolicyCheck
-	}
-
-	if p.CustomPolicyCheck != nil {
-		v.CustomPolicyCheck = p.CustomPolicyCheck
 	}
 
 	v.Inputs = p.Inputs.ToValid()

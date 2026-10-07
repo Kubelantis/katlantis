@@ -18,32 +18,7 @@ func TestRepoBranch(t *testing.T) {
   - id: github.com/foo/bar
     branch: /release/.*/
     apply_requirements: [approved, mergeable]
-    allowed_overrides: [workflow]
-    allowed_workflows: [development, production]
-    allow_custom_workflows: true
-workflows:
-  development:
-    plan:
-      steps:
-        - run: 'echo "Executing test workflow: terraform plan in ..."'
-        - init:
-            extra_args: ["-upgrade"]
-        - plan
-    apply:
-      steps:
-        - run: 'echo "Executing test workflow: terraform apply in ..."'
-        - apply
-  production:
-    plan:
-      steps:
-        - run: 'echo "Executing production workflow: terraform plan in ..."'
-        - init:
-            extra_args: ["-upgrade"]
-        - plan
-    apply:
-      steps:
-        - run: 'echo "Executing production workflow: terraform apply in ..."'
-        - apply
+    allowed_overrides: [inputs]
 `
 
 	repoYAML := `version: 3
@@ -51,14 +26,16 @@ projects:
   - name: development
     branch: /main/
     dir: terraform/development
-    workflow: development
+    inputs:
+      var_files: [development.tfvars]
     autoplan:
       when_modified:
         - "**/*"
   - name: production
     branch: /production/
     dir: terraform/production
-    workflow: production
+    inputs:
+      var_files: [production.tfvars]
     autoplan:
       when_modified:
         - "**/*"
