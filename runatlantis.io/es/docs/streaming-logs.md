@@ -6,7 +6,7 @@ Atlantis admite la transmisión de logs de terraform en tiempo real de forma pre
 * atlantis apply
 
 ::: warning
-No se admiten todas las salidas de custom workflow ni otros comandos de terraform. Se ha añadido soporte para terragrunt; vea ejemplos en [Custom Workflows](./custom-workflows.md#terragrunt).
+No se admiten todos los comandos de terraform. Los proyectos de Terragrunt y CDK Terrain se admiten mediante [`tool`](./server-side-repo-config.md#terragrunt).
 :::
 
 Para ver los logs de terraform en tiempo real, un usuario puede navegar por la sección de *details* de la verificación de estado de plan o apply de un proyecto dado.

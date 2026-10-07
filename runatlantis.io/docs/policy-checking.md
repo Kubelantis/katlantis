@@ -96,14 +96,16 @@ policies:
 - `sticky_policy_approvals` - When `true`, approvals survive re-plans as long as no new policy output items (as matched by `policy_item_regex`) are introduced. See [Sticky Policy Approvals](#sticky-policy-approvals).
 - `policy_item_regex` - Regex used to extract comparable items from policy output for sticky approval tracking. See [Sticky Policy Approvals](#sticky-policy-approvals).
 
-By default conftest is configured to only run the `main` package. If you wish to run specific/multiple policies consider passing `--namespace` or `--all-namespaces` to conftest with [`extra_args`](custom-workflows.md#adding-extra-arguments-to-terraform-commands) via a custom workflow as shown in the below example.
+By default conftest is configured to only run the `main` package. If you wish to run specific/multiple policies consider passing `--namespace` or `--all-namespaces` to conftest with `extra_args.policy_check` in [native inputs](server-side-repo-config.md#native-inputs) as shown in the below example.
 
 Example Server Side Repo configuration using `--all-namespaces` and a local src dir.
 
 ```yaml
 repos:
   - id: github.com/myorg/example-repo
-    workflow: custom
+    inputs:
+      extra_args:
+        policy_check: ["-p /home/atlantis/conftest_policies/", "--all-namespaces"]
 policies:
   owners:
     users:
@@ -112,16 +114,6 @@ policies:
     - name: example-conf-tests
       path: /home/atlantis/conftest_policies  # Consider separate vcs & mount into container
       source: local
-workflows:
-  custom:
-    plan:
-      steps:
-        - init
-        - plan
-    policy_check:
-      steps:
-        - policy_check:
-            extra_args: ["-p /home/atlantis/conftest_policies/", "--all-namespaces"]
 ```
 
 ::: tip Note
@@ -181,43 +173,25 @@ That's it! Now your Atlantis instance is configured to run policies on your Terr
 
 ### Pulling policies from a remote location
 
-Conftest supports [pulling policies](https://www.conftest.dev/sharing/#pulling) from remote locations such as S3, git, OCI, and other protocols supported by the [go-getter](https://github.com/hashicorp/go-getter) library. The key [`extra_args`](custom-workflows.md#adding-extra-arguments-to-terraform-commands) can be used to pass in the [`--update`](https://www.conftest.dev/sharing/#-update-flag) flag to tell `conftest` to pull the policies into the project folder before running the policy check.
+Conftest supports [pulling policies](https://www.conftest.dev/sharing/#pulling) from remote locations such as S3, git, OCI, and other protocols supported by the [go-getter](https://github.com/hashicorp/go-getter) library. The `extra_args.policy_check` key of [native inputs](server-side-repo-config.md#native-inputs) can be used to pass in the [`--update`](https://www.conftest.dev/sharing/#-update-flag) flag to tell `conftest` to pull the policies into the project folder before running the policy check.
 
 ```yaml
-workflows:
-  custom:
-    plan:
-      steps:
-        - init
-        - plan
-    policy_check:
-      steps:
-        - policy_check:
-            extra_args: ["--update", "s3::https://s3.amazonaws.com/bucket/foo"]
+repos:
+  - id: /.*/
+    inputs:
+      extra_args:
+        policy_check: ["--update", "s3::https://s3.amazonaws.com/bucket/foo"]
 ```
 
 Note that authentication may need to be configured separately if pulling policies from sources that require it. For example, to pull policies from an S3 bucket, Atlantis host can be configured with a default AWS profile that has permission to `s3:GetObject` and `s3:ListBucket` from the S3 bucket.
-
-### Running policy check against Terraform source code
-
-By default, Atlantis runs the policy check against the [`SHOWFILE`](custom-workflows.md#custom-run-command). In order to run the policy test against Terraform files directly, override the default `conftest` command used and pass in `*.tf` as one of the inputs to `conftest`. The `show` step is required so that Atlantis will generate the `SHOWFILE`.
-
-```yaml
-workflows:
-  custom:
-    policy_check:
-      steps:
-        - show
-        - run: conftest test $SHOWFILE *.tf --no-fail
-```
 
 ### Quiet policy checks
 
 By default, Atlantis will add a comment to all pull requests with the policy check result - both successes and failures. Version 0.21.0 added the [`--quiet-policy-checks`](server-configuration.md#quiet-policy-checks) option, which will instead only add comments when policy checks fail, significantly reducing the number of comments when most policy check results succeed.
 
-### Data for custom run steps
+### Policy check result data
 
-When the policy check workflow runs, a file is created in the working directory which contains information about the status of each policy set tested. This data may be useful in custom run steps to generate metrics or notifications. The file contains JSON data in the following format:
+When the policy check runs, a file is created in each project directory with the status of each policy set tested. [Post workflow hooks](post-workflow-hooks.md) can read it to generate metrics or notifications. The file contains JSON data in the following format:
 
 ```json
 [

@@ -50,22 +50,19 @@ repos:
   # import_requirements sets the Import Requirements for all repos that match.
   import_requirements: [approved, mergeable, undiverged]
 
-  # workflow sets the workflow for all repos that match.
-  # This workflow must be defined in the workflows section.
-  workflow: custom
+  # inputs configures the built-in steps for all repos that match.
+  # See Native Inputs below.
+  inputs:
+    var_files: [env/prod.tfvars]
+    extra_args:
+      plan: ["-lock=false"]
+
+  # tool runs the built-in steps with terraform (default), terragrunt or cdktn.
+  tool: terraform
 
   # allowed_overrides specifies which keys can be overridden by this repo in
   # its atlantis.yaml file.
-  allowed_overrides: [apply_requirements, workflow, delete_source_branch_on_merge, repo_locking, repo_locks, custom_policy_check]
-
-  # allowed_workflows specifies which workflows the repos that match
-  # are allowed to select.
-  allowed_workflows: [custom]
-
-  # allow_custom_workflows defines whether this repo can define its own
-  # workflows. If false (default), the repo can only use server-side defined
-  # workflows.
-  allow_custom_workflows: true
+  allowed_overrides: [apply_requirements, delete_source_branch_on_merge, repo_locking, repo_locks, inputs, tool]
 
   # delete_source_branch_on_merge defines whether the source branch would be deleted on merge
   # If false (default), the source branch won't be deleted on merge
@@ -81,15 +78,11 @@ repos:
   repo_locks:
     mode: on_plan
 
-  # custom_policy_check defines whether policy checking tools besides Conftest are enabled in checks
-  # If false (default), only Conftest JSON output is allowed
-  custom_policy_check: false
-
-  # pre_workflow_hooks defines arbitrary list of scripts to execute before workflow execution.
+  # pre_workflow_hooks defines arbitrary list of scripts to execute in the clone before Atlantis runs a command.
   pre_workflow_hooks:
     - run: my-pre-workflow-hook-command arg1
 
-  # post_workflow_hooks defines arbitrary list of scripts to execute after workflow execution.
+  # post_workflow_hooks defines arbitrary list of scripts to execute in the clone after Atlantis runs a command.
   post_workflow_hooks:
     - run: my-post-workflow-hook-command arg1
 
@@ -108,22 +101,7 @@ repos:
 
   # id can also be an exact match.
 - id: github.com/myorg/specific-repo
-
-# workflows lists server-side custom workflows
-workflows:
-  custom:
-    plan:
-      steps:
-      - run: my-custom-command arg1 arg2
-      - init
-      - plan:
-          extra_args: ["-lock", "false"]
-      - run: my-custom-command arg1 arg2
-    apply:
-      steps:
-      - run: echo hi
-      - apply
- ```
+```
 
 ## Use Cases
 
@@ -238,7 +216,7 @@ projects:
 
 ### Native Inputs
 
-`inputs` configures the built-in `init`, `plan` and `apply` steps without a custom workflow. Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` replace it field by field.
+`inputs` configures the built-in steps (`init`, `plan`, `apply` and the others). Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` replace it field by field.
 
 ```yaml
 repos:
@@ -354,8 +332,9 @@ atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml
 
 ### Running Scripts Before Atlantis Workflows
 
-If you want to run scripts that would execute before Atlantis can run default or
-custom workflows, you can create a `pre-workflow-hooks`:
+If you want to run scripts in Atlantis's clone before it runs a command, for
+example to decrypt secrets or render backend files, you can create
+`pre_workflow_hooks`:
 
 ```yaml
 repos:
@@ -371,8 +350,8 @@ pre workflow hooks.
 
 ### Running Scripts After Atlantis Workflows
 
-If you want to run scripts that would execute after Atlantis runs default or
-custom workflows, you can create a `post-workflow-hooks`:
+If you want to run scripts in Atlantis's clone after it runs a command, for
+example to estimate cost from the plan, you can create `post_workflow_hooks`:
 
 ```yaml
 repos:
@@ -386,167 +365,46 @@ repos:
 See [Post Workflow Hooks](post-workflow-hooks.md) for more details on writing
 post workflow hooks.
 
-### Change The Default Atlantis Workflow
+### Repos Can Set Their Own Native Inputs Or Tool
 
-If you want to change the default commands that Atlantis runs during `plan` and `apply`
-phases, you can create a new `workflow`.
-
-If you want to use that workflow by default for all repos, use the workflow
-key `default`:
+To let repos set `inputs` or `tool` on their projects in `atlantis.yaml`, list
+the keys in `allowed_overrides`:
 
 ```yaml
 # repos.yaml
-# NOTE: the repos key is not required.
-workflows:
-  # It's important that this is "default".
-  default:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-```
-
-See [Custom Workflows](custom-workflows.md) for more details on writing
-custom workflows.
-
-### Allow Repos To Choose A Server-Side Workflow
-
-If you want repos to be able to choose their own workflows that are defined
-in the server-side repo config, you need to create the workflows
-server-side and then allow each repo to override the `workflow` key:
-
-```yaml
-# repos.yaml
-# Allow repos to override the workflow key.
 repos:
 - id: /.*/
-  allowed_overrides: [workflow]
-
-# Define your custom workflows.
-workflows:
-  custom1:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-
-  custom2:
-    plan:
-      steps:
-      - run: another custom command
-    apply:
-      steps:
-      - run: another custom command
+  inputs:
+    var_files: [default.tfvars]
+  allowed_overrides: [inputs, tool]
 ```
-
-Or, if you want to restrict what workflows each repo has access to, use the `allowed_workflows`
-key:
-
-```yaml
-# repos.yaml
-# Restrict which workflows repos can select.
-repos:
-- id: /.*/
-  allowed_overrides: [workflow]
-
-- id: /my_repo/
-  allowed_overrides: [workflow]
-  allowed_workflows: [custom1]
-
-# Define your custom workflows.
-workflows:
-  custom1:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-
-  custom2:
-    plan:
-      steps:
-      - run: another custom command
-    apply:
-      steps:
-      - run: another custom command
-```
-
-Then each allowed repo can choose one of the workflows in their `atlantis.yaml`
-files:
 
 ```yaml
 # atlantis.yaml
 version: 3
 projects:
-- dir: .
-  workflow: custom1 # could also be custom2 OR default
+- dir: envs/prod
+  inputs:
+    var_files: [prod.tfvars]   # replaces the server-side var_files
+- dir: live/vpc
+  tool: terragrunt
 ```
 
-:::tip NOTE
-There is always a workflow named `default` that corresponds to Atlantis' default workflow
-unless you've created your own server-side workflow with that key (overriding it).
-:::
+Project inputs replace the server-side ones field by field.
 
-See [Custom Workflows](custom-workflows.md) for more details on writing
-custom workflows.
+### Removed Keys
 
-### Allow Using Custom Policy Tools
+Custom workflows were replaced by native inputs and `tool`, and Conftest is the
+only policy engine. These keys are rejected with an error that names the key:
 
-Conftest is the standard policy check application integrated with Atlantis, but custom tools can still be run in custom workflows when the `custom_policy_check` option is set.  See the [Custom Policy Checks page](custom-policy-checks.md) for detailed examples.
+- `workflows`, and `workflow` on repo entries
+- `allowed_workflows` and `allow_custom_workflows`
+- `custom_policy_check`
+- `workflow` and `custom_policy_check` in `allowed_overrides`
 
-### Allow Repos To Define Their Own Workflows
-
-If you want repos to be able to define their own workflows you need to
-allow them to override the `workflow` key and set `allow_custom_workflows` to `true`.
-
-::: danger
-If repos can define their own workflows, then anyone that can create a pull
-request to that repo can essentially run arbitrary code on your Atlantis server.
-:::
-
-```yaml
-# repos.yaml
-repos:
-- id: /.*/
-
-  # With just allowed_overrides: [workflow], repos can only
-  # choose workflows defined server-side.
-  allowed_overrides: [workflow]
-
-  # By setting allow_custom_workflows to true, we allow repos to also
-  # define their own workflows.
-  allow_custom_workflows: true
-```
-
-Then each allowed repo can define and use a custom workflow in their `atlantis.yaml` files:
-
-```yaml
-# atlantis.yaml
-version: 3
-projects:
-- dir: .
-  workflow: custom1
-workflows:
-  custom1:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-```
-
-See [Custom Workflows](custom-workflows.md) for more details on writing
-custom workflows.
+In `atlantis.yaml`, `workflows` and the project keys `workflow` and
+`custom_policy_check` are rejected too. `atlantis migrate-workflows` converts
+them; see [Migrating Custom Workflows To Native Inputs](#migrating-custom-workflows-to-native-inputs).
 
 ### Multiple Atlantis Servers Handle The Same Repository
 
@@ -605,7 +463,6 @@ Each servers handle different repository config files.
 | Key        | Type                                                  | Default   | Required | Description                                                                           |
 |------------|-------------------------------------------------------|-----------|----------|---------------------------------------------------------------------------------------|
 | repos      | array[[Repo](#repo)]                                  | see below | no       | List of repos to apply settings to.                                                   |
-| workflows  | map[string: [Workflow](custom-workflows.md#workflow)] | see below | no       | Map from workflow name to workflow. Workflows override the default Atlantis commands. |
 | policies   | Policies.                                             | none      | no       | List of policy sets to run and associated metadata                                    |
 | metrics    | Metrics.                                              | none      | no       | Map of metric configuration                                                           |
 | team_authz | [TeamAuthz](#teamauthz)                               | none      | no       | Configuration of team permission checking                                             |
@@ -623,26 +480,10 @@ repos:
   plan_requirements: []
   apply_requirements: []
   import_requirements: []
-  workflow: default
   allowed_overrides: []
-  allow_custom_workflows: false
+  tool: terraform
 ```
 
-#### `workflows`
-
-`workflows` always contains the Atlantis default workflow under the key `default`:
-
-```yaml
-workflows:
-  default:
-    plan:
-      steps: [init, plan]
-    apply:
-      steps: [apply]
-```
-
-This gets merged with whatever config you write.
-If you set a workflow with the key `default`, it will override this.
 :::
 
 ### Repo
@@ -652,20 +493,18 @@ If you set a workflow with the key `default`, it will override this.
 | id | string | none | yes | Value can be a regular expression when specified as /&lt;regex&gt;/ or an exact string match. Repo IDs are of the form `{vcs hostname}/{org}/{name}`, ex. `github.com/owner/repo`. Hostname is specified without scheme or port. For Bitbucket Server, {org} is the **name** of the project, not the key. |
 | branch | string | none | no | An regex matching pull requests by base branch (the branch the pull request is getting merged into). By default, all branches are matched |
 | repo_config_file | string | none | no | Repo config file path in this repo. By default, use `atlantis.yaml` which is located on repository root. When multiple atlantis servers work with the same repo, please set different file names. |
-| workflow | string | none | no | A custom workflow. |
+| pre_workflow_hooks | [][WorkflowHook](pre-workflow-hooks.md#reference) | none | no | Scripts run in Atlantis's clone before a command. See [Pre Workflow Hooks](pre-workflow-hooks.md). |
+| post_workflow_hooks | [][WorkflowHook](post-workflow-hooks.md#reference) | none | no | Scripts run in Atlantis's clone after a command. See [Post Workflow Hooks](post-workflow-hooks.md). |
 | inputs | [Inputs](#native-inputs) | none | no | Native inputs for the built-in steps: `var_files`, `vars`, `backend_config`, `env`, `extra_args`. |
 | tool | string | `terraform` | no | Runs the built-in steps with `terraform`, [`terragrunt`](#terragrunt) or [`cdktn`](#cdk-terrain). |
 | plan_requirements | []string | none | no | Requirements that must be satisfied before `atlantis plan` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | apply_requirements | []string | none | no | Requirements that must be satisfied before `atlantis apply` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | import_requirements | []string | none | no | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
-| allowed_overrides | []string | none | no | A list of restricted keys that `atlantis.yaml` files can override. The only supported keys are `apply_requirements`, `workflow`, `delete_source_branch_on_merge`,`repo_locking`, `repo_locks`, `custom_policy_check`, `inputs` and `tool` |
-| allowed_workflows | []string | none | no | A list of workflows that `atlantis.yaml` files can select from. |
-| allow_custom_workflows | bool | false | no | Whether or not to allow [Custom Workflows](custom-workflows.md). |
+| allowed_overrides | []string | none | no | A list of restricted keys that `atlantis.yaml` files can override. The supported keys are `plan_requirements`, `apply_requirements`, `import_requirements`, `delete_source_branch_on_merge`, `repo_locking`, `repo_locks`, `policy_check`, `silence_pr_comments`, `inputs` and `tool`. |
 | delete_source_branch_on_merge | bool | false | no | Whether or not to delete the source branch on merge. |
 | repo_locking | bool | false | no | (deprecated) Whether or not to get a lock. |
 | repo_locks | [RepoLocks](#repolocks) | `mode: on_plan` | no | Whether or not repository locks are enabled for this project on plan or apply. See [RepoLocks](#repolocks) for more details. |
 | policy_check | bool | false | no | Whether or not to run policy checks on this repository. |
-| custom_policy_check | bool | false | no | Whether or not to enable custom policy check tools outside of Conftest on this repository. |
 | autodiscover | AutoDiscover | none | no | Auto discover settings for this repo |
 | silence_pr_comments | []string | none | no | Silence PR comments from defined stages while preserving PR status checks. Useful in large environments with many Atlantis instances and/or projects, when the comments are too big and too many, therefore it is preferable to rely solely on PR status checks. Supported values are: `plan`, `apply`. |
 
@@ -678,7 +517,7 @@ If you set a workflow with the key `default`, it will override this.
   ```yaml
   repos:
   - id: /.*/
-    allow_custom_workflows: true
+    tool: terragrunt
     apply_requirements: [approved]
   - id: github.com/owner/repo
     apply_requirements: []
@@ -688,19 +527,16 @@ If you set a workflow with the key `default`, it will override this.
 
   ```yaml
   apply_requirements: []
-  workflow: default
   allowed_overrides: []
-  allow_custom_workflows: true
+  tool: terragrunt
   ```
 
   Where
   * `apply_requirements` is set from the `id: github.com/owner/repo` config because
     it overrides the previous matching config from `id: /.*/`.
-  * `workflow` is set from the default config that always
-    exists.
   * `allowed_overrides` is set from the default config that always
     exists.
-  * `allow_custom_workflows` is set from the `id: /.*/` config and isn't unset
+  * `tool` is set from the `id: /.*/` config and isn't unset
     by the `id: github.com/owner/repo` config because it didn't define that key.
 :::
 

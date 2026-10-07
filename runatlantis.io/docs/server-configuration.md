@@ -662,8 +662,8 @@ ATLANTIS_ENABLE_DRIFT_DETECTION=true
 ```
 
 Enable drift detection API endpoints. Drift detection does not run Terraform apply, but
-it does execute the normal plan lifecycle, including configured pre-workflow hooks,
-custom workflows, custom plan steps, and Terraform plan commands. When enabled, Atlantis
+it does execute the normal plan lifecycle, including configured pre-workflow hooks
+and Terraform plan commands. When enabled, Atlantis
 will initialize in-memory storage for drift detection results and a remediation service,
 making drift detection, status, and plan-only remediation endpoints functional. If drift [webhooks](sending-notifications-via-webhooks.md#drift-detection-webhooks)
 are configured (`event: drift`), successful detection runs send notifications to Slack or HTTP endpoints,
@@ -1141,7 +1141,7 @@ ATLANTIS_INCLUDE_GIT_UNTRACKED_FILES=true
 ```
 
 Include git untracked files in the Atlantis modified file list.
-Used for example with [CDK Terrain](custom-workflows.md#cdk-terrain-cdktn) pre-workflow hooks that
+Used for example with [pre workflow hooks](pre-workflow-hooks.md) that
 dynamically generate Terraform files.
 
 ### `--job-log-dir`
@@ -1450,29 +1450,19 @@ Specify server-side repo config as a JSON string. Useful if you don't want to wr
 See [Server Side Repo Config](server-side-repo-config.md) for more details.
 
 ::: tip
-If specifying a [Workflow](custom-workflows.md#reference), [step](custom-workflows.md#step)'s
-can be specified as follows:
+[Native inputs](server-side-repo-config.md#native-inputs) are specified as follows:
 
 ```json
 {
-   "repos": [],
-   "workflows": {
-      "custom": {
-         "plan": {
-            "steps": [
-               "init",
-               {
-                  "plan": {
-                     "extra_args": ["extra", "args"]
-                  }
-               },
-               {
-                  "run": "my custom command"
-               }
-            ]
+   "repos": [
+      {
+         "id": "/.*/",
+         "inputs": {
+            "var_files": ["prod.tfvars"],
+            "extra_args": {"plan": ["-lock-timeout=5m"]}
          }
       }
-   }
+   ]
 }
 ```
 

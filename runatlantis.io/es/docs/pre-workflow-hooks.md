@@ -1,11 +1,13 @@
 # Hooks pre workflow
 
-Los hooks pre workflow pueden definirse para ejecutar scripts antes de que se ejecuten los workflows predeterminados o personalizados. Los hooks pre workflow difieren de los [custom
-workflows](custom-workflows.md#custom-run-command) de varias maneras.
+Los hooks pre workflow pueden definirse para ejecutar scripts en el clon del pull request
+antes de que Atlantis ejecute sus pasos incorporados. Son el lugar para los comandos que deben
+ejecutarse en el clon de Atlantis, ya que los workflows personalizados y los pasos `run` se eliminaron.
 
-1. Los hooks pre workflow no requieren que la configuración del repositorio esté presente. Esto puede utilizarse para [generar dinámicamente configuraciones de repositorio](pre-workflow-hooks.md#dynamic-repo-config-generation).
-2. Los hooks pre workflow se ejecutan fuera de los comandos de Atlantis. Esto significa
-   que no muestran su salida de vuelta al PR como un comentario.
+1. Los hooks pre workflow no requieren que la configuración del repositorio esté presente.
+2. Los hooks pre workflow se ejecutan una vez por comando en la raíz del repositorio, fuera de los
+   comandos de Atlantis. Esto significa que no muestran su salida de vuelta al PR como un comentario.
+3. Solo el administrador de Atlantis puede definirlos, en la configuración del lado del servidor.
 
 ## Uso
 
@@ -42,7 +44,18 @@ repos:
 
 ## Casos de uso
 
-### Generación dinámica de Repo Config
+Usos habituales que Atlantis no cubre de forma nativa:
+
+- Descifrar secretos versionados en el repositorio con git-crypt o sops antes del plan.
+- Generar `backend.tf` o `provider.tf` a partir de plantillas.
+- Escribir `.terraformrc` para un registro privado o un mirror de providers.
+- Instalar herramientas auxiliares que la configuración necesita.
+
+Los proyectos de Terragrunt y CDK Terrain se descubren de forma nativa con
+[`tool`](server-side-repo-config.md#terragrunt), así que ya no hace falta generar
+`atlantis.yaml` con terragrunt-atlantis-config.
+
+### Generación dinámica de Repo Config {#dynamic-repo-config-generation}
 
 Para generar el repo `atlantis.yaml` antes de que Atlantis pueda analizarlo,
 agregue un comando `run` a `pre_workflow_hooks`. Su Repo config se generará
@@ -68,9 +81,9 @@ repos:
     - id: /.*/
       pre_workflow_hooks:
         - run: |
-            echo "generating atlantis.yaml"
-            terragrunt-atlantis-config generate --output atlantis.yaml --autoplan --parallel
-          description: Generating atlantis.yaml
+            echo "decrypting secrets"
+            git-crypt unlock /secrets/git-crypt.key
+          description: Decrypting secrets
           shell: bash
           shellArgs: -cv
 ```
@@ -78,9 +91,6 @@ repos:
 ## Referencia
 
 ### Comando `run` personalizado
-
-Esto es muy similar al [custom workflow run
-command](custom-workflows.md#custom-run-command).
 
 ```yaml
 - run: custom-command

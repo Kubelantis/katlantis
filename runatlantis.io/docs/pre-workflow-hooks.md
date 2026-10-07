@@ -1,13 +1,18 @@
 # Pre Workflow Hooks
 
-Pre workflow hooks can be defined to run scripts before default or custom
-workflows are executed. Pre workflow hooks differ from [custom
-workflows](custom-workflows.md#custom-run-command) in several ways.
+Pre workflow hooks run scripts in Atlantis's clone of the pull request before
+Atlantis runs a command. They are defined in the [server-side repo
+config](server-side-repo-config.md) only, so the Atlantis administrator
+controls what runs.
 
-1. Pre workflow hooks do not require the repository configuration to be
-   present. This can be utilized to [dynamically generate repo configs](pre-workflow-hooks.md#dynamic-repo-config-generation).
-2. Pre workflow hooks are run outside of Atlantis commands. Which means
-   they do not surface their output back to the PR as a comment.
+1. Pre workflow hooks run once per command, at the root of the repository,
+   before Atlantis reads the repository configuration.
+2. Pre workflow hooks run outside of Atlantis commands, which means they do
+   not surface their output back to the PR as a comment.
+
+Projects themselves always run the built-in steps; configure them with
+[native inputs](server-side-repo-config.md#native-inputs) and
+[`tool`](server-side-repo-config.md#terragrunt).
 
 ## Usage
 
@@ -44,11 +49,20 @@ repos:
 
 ## Use Cases
 
+Use a pre workflow hook for work that must happen in Atlantis's clone before
+Terraform runs, for example:
+
+- decrypting secrets committed to the repository (git-crypt, sops)
+- rendering `backend.tf` or `provider.tf` from templates
+- writing `.terraformrc` for a private registry or provider mirror
+- installing a helper tool the configuration needs
+
 ### Dynamic Repo Config Generation
 
-To generate the repo `atlantis.yaml` before Atlantis can parse it,
-add a `run` command to `pre_workflow_hooks`. Your Repo config will be generated
-right before Atlantis parses it.
+Terragrunt units and CDK Terrain stacks are discovered natively when the
+repository's [`tool`](server-side-repo-config.md#terragrunt) is `terragrunt` or
+`cdktn`, so they need no generated `atlantis.yaml`. For other layouts, a hook
+can generate the repo `atlantis.yaml` right before Atlantis parses it:
 
 ```yaml
 repos:
@@ -70,9 +84,9 @@ repos:
     - id: /.*/
       pre_workflow_hooks:
         - run: |
-            echo "generating atlantis.yaml"
-            terragrunt-atlantis-config generate --output atlantis.yaml --autoplan --parallel
-          description: Generating atlantis.yaml
+            echo "decrypting secrets"
+            git-crypt unlock /secrets/git-crypt.key
+          description: Decrypting secrets
           shell: bash
           shellArgs: -cv
 ```
@@ -80,9 +94,6 @@ repos:
 ## Reference
 
 ### Custom `run` Command
-
-This is very similar to the [custom workflow run
-command](custom-workflows.md#custom-run-command).
 
 ```yaml
 - run: custom-command

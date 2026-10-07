@@ -96,14 +96,16 @@ policies:
 - `sticky_policy_approvals` - Cuando es `true`, las aprobaciones sobreviven a los re-plan siempre que no se introduzcan nuevos elementos en la salida de políticas (según coincida con `policy_item_regex`). Consulte [Sticky Policy Approvals](#sticky-policy-approvals).
 - `policy_item_regex` - Regex usado para extraer elementos comparables de la salida de políticas para el seguimiento de aprobaciones persistentes. Consulte [Sticky Policy Approvals](#sticky-policy-approvals).
 
-Por defecto, conftest está configurado para ejecutar solo el paquete `main`. Si desea ejecutar políticas específicas/múltiples, considere pasar `--namespace` o `--all-namespaces` a conftest con [`extra_args`](custom-workflows.md#adding-extra-arguments-to-terraform-commands) mediante un workflow personalizado como se muestra en el ejemplo a continuación.
+Por defecto, conftest está configurado para ejecutar solo el paquete `main`. Si desea ejecutar políticas específicas/múltiples, considere pasar `--namespace` o `--all-namespaces` a conftest con [`inputs.extra_args.policy_check`](server-side-repo-config.md#native-inputs) como se muestra en el ejemplo a continuación.
 
 Ejemplo de configuración de repositorio del lado del servidor usando `--all-namespaces` y un directorio src local.
 
 ```yaml
 repos:
   - id: github.com/myorg/example-repo
-    workflow: custom
+    inputs:
+      extra_args:
+        policy_check: ["-p /home/atlantis/conftest_policies/", "--all-namespaces"]
 policies:
   owners:
     users:
@@ -112,16 +114,6 @@ policies:
     - name: example-conf-tests
       path: /home/atlantis/conftest_policies  # Consider separate vcs & mount into container
       source: local
-workflows:
-  custom:
-    plan:
-      steps:
-        - init
-        - plan
-    policy_check:
-      steps:
-        - policy_check:
-            extra_args: ["-p /home/atlantis/conftest_policies/", "--all-namespaces"]
 ```
 
 ::: tip Note
@@ -181,43 +173,25 @@ deny[msg] {
 
 ### Obtener políticas desde una ubicación remota
 
-Conftest admite [obtener políticas](https://www.conftest.dev/sharing/#pulling) desde ubicaciones remotas como S3, git, OCI y otros protocolos compatibles con la biblioteca [go-getter](https://github.com/hashicorp/go-getter). La clave [`extra_args`](custom-workflows.md#adding-extra-arguments-to-terraform-commands) puede usarse para pasar la flag [`--update`](https://www.conftest.dev/sharing/#-update-flag) para indicar a `conftest` que obtenga las políticas en la carpeta del proyecto antes de ejecutar la verificación de políticas.
+Conftest admite [obtener políticas](https://www.conftest.dev/sharing/#pulling) desde ubicaciones remotas como S3, git, OCI y otros protocolos compatibles con la biblioteca [go-getter](https://github.com/hashicorp/go-getter). La clave [`inputs.extra_args.policy_check`](server-side-repo-config.md#native-inputs) puede usarse para pasar la flag [`--update`](https://www.conftest.dev/sharing/#-update-flag) para indicar a `conftest` que obtenga las políticas en la carpeta del proyecto antes de ejecutar la verificación de políticas.
 
 ```yaml
-workflows:
-  custom:
-    plan:
-      steps:
-        - init
-        - plan
-    policy_check:
-      steps:
-        - policy_check:
-            extra_args: ["--update", "s3::https://s3.amazonaws.com/bucket/foo"]
+repos:
+  - id: /.*/
+    inputs:
+      extra_args:
+        policy_check: ["--update", "s3::https://s3.amazonaws.com/bucket/foo"]
 ```
 
 Tenga en cuenta que la autenticación puede necesitar configurarse por separado si obtiene políticas desde fuentes que la requieren. Por ejemplo, para obtener políticas desde un bucket de S3, el host de Atlantis puede configurarse con un perfil de AWS predeterminado que tenga permiso para `s3:GetObject` y `s3:ListBucket` del bucket de S3.
-
-### Ejecutar la verificación de políticas contra el código fuente de Terraform
-
-Por defecto, Atlantis ejecuta la verificación de políticas contra [`SHOWFILE`](custom-workflows.md#custom-run-command). Para ejecutar la prueba de políticas directamente contra archivos de Terraform, sobrescriba el comando `conftest` predeterminado usado y pase `*.tf` como una de las entradas a `conftest`. El paso `show` es requerido para que Atlantis genere `SHOWFILE`.
-
-```yaml
-workflows:
-  custom:
-    policy_check:
-      steps:
-        - show
-        - run: conftest test $SHOWFILE *.tf --no-fail
-```
 
 ### Verificaciones de políticas silenciosas
 
 Por defecto, Atlantis agregará un comentario a todos los pull request con el resultado de la verificación de políticas, tanto éxitos como fallos. La versión 0.21.0 agregó la opción [`--quiet-policy-checks`](server-configuration.md#quiet-policy-checks), que en su lugar solo agregará comentarios cuando las verificaciones de políticas fallen, reduciendo significativamente el número de comentarios cuando la mayoría de los resultados de verificación de políticas tienen éxito.
 
-### Datos para pasos custom run
+### Datos de resultados de políticas
 
-Cuando se ejecuta el workflow de verificación de políticas, se crea un archivo en el directorio de trabajo que contiene información sobre el estado de cada conjunto de políticas probado. Estos datos pueden ser útiles en pasos custom run para generar métricas o notificaciones. El archivo contiene datos JSON en el siguiente formato:
+Cuando se ejecuta la verificación de políticas, se crea un archivo en cada directorio de proyecto que contiene información sobre el estado de cada conjunto de políticas probado. Estos datos pueden ser útiles en [post workflow hooks](post-workflow-hooks.md) para generar métricas o notificaciones. El archivo contiene datos JSON en el siguiente formato:
 
 ```json
 [

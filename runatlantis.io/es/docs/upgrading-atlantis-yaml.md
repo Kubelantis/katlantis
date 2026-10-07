@@ -1,10 +1,19 @@
 # Actualización de atlantis.yaml
 
+::: warning
+Esta página describe actualizaciones históricas de `atlantis.yaml`. Los workflows personalizados
+y los pasos `run` que aparecen en los ejemplos se eliminaron: una configuración que todavía los
+use falla con un error. Use `atlantis migrate-workflows` para convertirlos en
+[entradas nativas](server-side-repo-config.md#native-inputs); consulte
+[Migrar workflows personalizados](server-side-repo-config.md#migrating-custom-workflows-to-native-inputs).
+Las versiones 2 y 3 se leen ahora de la misma manera.
+:::
+
 ## Actualización de v2 a v3
 
 La versión de Atlantis `v0.7.0` introdujo una nueva versión 3 de `atlantis.yaml`.
 
-**Si no estás usando pasos custom de [custom `run`](custom-workflows.md#custom-run-command),
+**Si no estás usando pasos custom de `run`,
  entonces puedes actualizar de `version: 2` a `version: 3` sin ningún cambio.**
 
 **NOTA:** La versión 2 **no está siendo deprecada** y no hay necesidad de actualizar tu versión

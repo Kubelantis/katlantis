@@ -1140,7 +1140,7 @@ ATLANTIS_INCLUDE_GIT_UNTRACKED_FILES=true
 ```
 
 Incluir archivos untracked de git en la lista de archivos modificados de Atlantis.
-Se usa por ejemplo con hooks pre-workflow de [CDK Terrain](custom-workflows.md#cdk-terrain-cdktn) que
+Se usa por ejemplo con [pre workflow hooks](pre-workflow-hooks.md) que
 generan dinámicamente archivos Terraform.
 
 ### `--job-log-dir`
@@ -1454,29 +1454,18 @@ Especifique server-side repo config como una cadena JSON. Útil si no quiere esc
 Vea [Server Side Repo Config](server-side-repo-config.md) para más detalles.
 
 ::: tip
-Si especifica un [Workflow](custom-workflows.md#reference), los [step](custom-workflows.md#step)
-pueden especificarse de la siguiente manera:
+Las [entradas nativas](server-side-repo-config.md#native-inputs) pueden especificarse de la siguiente manera:
 
 ```json
 {
-   "repos": [],
-   "workflows": {
-      "custom": {
-         "plan": {
-            "steps": [
-               "init",
-               {
-                  "plan": {
-                     "extra_args": ["extra", "args"]
-                  }
-               },
-               {
-                  "run": "my custom command"
-               }
-            ]
+   "repos": [
+      {
+         "id": "/.*/",
+         "inputs": {
+            "extra_args": {"plan": ["extra", "args"]}
          }
       }
-   }
+   ]
 }
 ```
 

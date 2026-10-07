@@ -93,7 +93,7 @@ puede agregarlos al final del comentario después de `--`, ej.
 atlantis plan -d dir -- -var foo='bar'
 ```
 
-Si siempre necesita agregar un determinado flag, vea [Custom Workflow Use Cases](custom-workflows.md#adding-extra-arguments-to-terraform-commands).
+Si siempre necesita agregar un determinado flag, vea [`inputs.extra_args`](server-side-repo-config.md#native-inputs).
 
 ### Archivos automáticos de variables de entorno
 
@@ -276,7 +276,7 @@ agréguelos al final del comentario después de `--`, p. ej.
 atlantis import -d dir 'aws_instance.example["foo"]' i-1234567890abcdef0 -- -var foo='bar'
 ```
 
-Si es necesario que un flag se agregue siempre, vea [Custom Workflow Use Cases](custom-workflows.md#adding-extra-arguments-to-terraform-commands).
+Si es necesario que un flag se agregue siempre, vea [`inputs.extra_args`](server-side-repo-config.md#native-inputs).
 
 ---
 
@@ -330,7 +330,7 @@ agréguelos al final del comentario después de `--`, p. ej.
 atlantis state -d dir rm 'aws_instance.example["foo"]' -- -lock=false
 ```
 
-Si es necesario que un flag se agregue siempre, vea [Custom Workflow Use Cases](custom-workflows.md#adding-extra-arguments-to-terraform-commands).
+Si es necesario que un flag se agregue siempre, vea [`inputs.extra_args`](server-side-repo-config.md#native-inputs).
 
 ---
 

@@ -6,7 +6,7 @@ Atlantis supports streaming terraform logs in real time by default. Currently, o
 * atlantis apply
 
 ::: warning
-Not all custom workflow outputs and other terraform commands are supported. Support for terragrunt has been added, see examples in [Custom Workflows](./custom-workflows.md#terragrunt).
+Not all terraform commands are supported. Projects that use [Terragrunt](server-side-repo-config.md#terragrunt) or [CDK Terrain](server-side-repo-config.md#cdk-terrain) stream their output too.
 :::
 
 In order to view real-time terraform logs, a user can navigate through the *details* section of a given project's plan or apply status check.

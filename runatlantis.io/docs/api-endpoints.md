@@ -636,7 +636,7 @@ At least one of `projects` or `paths` should be specified for targeted detection
 ::: tip Status Side Effects
 Drift detection suppresses normal Atlantis plan, policy check, apply, and hook commit statuses. Drift-specific webhook notifications can still be sent for successful detection runs, including no-drift heartbeat results, when drift webhooks are configured.
 
-Drift detection does not run Terraform apply, but it does execute the normal plan lifecycle. Configured pre-workflow hooks, custom workflows, custom plan steps, and Terraform plan commands can run server-side outside a pull request context.
+Drift detection does not run Terraform apply, but it does execute the normal plan lifecycle. Configured pre-workflow hooks and Terraform plan commands can run server-side outside a pull request context.
 
 Drift detection does not bypass team allowlists. If a configured team allowlist cannot authorize the API request, the request fails instead of scanning or reconciling an empty project set. PR-state `plan_requirements` such as `approved` or `mergeable` also fail closed for non-PR drift detection.
 :::

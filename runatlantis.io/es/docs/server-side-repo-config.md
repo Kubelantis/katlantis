@@ -50,22 +50,19 @@ repos:
   # import_requirements sets the Import Requirements for all repos that match.
   import_requirements: [approved, mergeable, undiverged]
 
-  # workflow sets the workflow for all repos that match.
-  # This workflow must be defined in the workflows section.
-  workflow: custom
+  # inputs configures the built-in init, plan and apply steps for all repos
+  # that match. See Native Inputs below.
+  inputs:
+    var_files: [env/prod.tfvars]
+    extra_args:
+      plan: ["-lock-timeout=5m"]
+
+  # tool runs the built-in steps with terraform (default), terragrunt or cdktn.
+  tool: terraform
 
   # allowed_overrides specifies which keys can be overridden by this repo in
   # its atlantis.yaml file.
-  allowed_overrides: [apply_requirements, workflow, delete_source_branch_on_merge, repo_locking, repo_locks, custom_policy_check]
-
-  # allowed_workflows specifies which workflows the repos that match
-  # are allowed to select.
-  allowed_workflows: [custom]
-
-  # allow_custom_workflows defines whether this repo can define its own
-  # workflows. If false (default), the repo can only use server-side defined
-  # workflows.
-  allow_custom_workflows: true
+  allowed_overrides: [apply_requirements, delete_source_branch_on_merge, repo_locking, repo_locks, inputs, tool]
 
   # delete_source_branch_on_merge defines whether the source branch would be deleted on merge
   # If false (default), the source branch won't be deleted on merge
@@ -80,10 +77,6 @@ repos:
   # Valid values are on_plan (default), on_apply or disabled.
   repo_locks:
     mode: on_plan
-
-  # custom_policy_check defines whether policy checking tools besides Conftest are enabled in checks
-  # If false (default), only Conftest JSON output is allowed
-  custom_policy_check: false
 
   # pre_workflow_hooks defines arbitrary list of scripts to execute before workflow execution.
   pre_workflow_hooks:
@@ -108,22 +101,7 @@ repos:
 
   # id can also be an exact match.
 - id: github.com/myorg/specific-repo
-
-# workflows lists server-side custom workflows
-workflows:
-  custom:
-    plan:
-      steps:
-      - run: my-custom-command arg1 arg2
-      - init
-      - plan:
-          extra_args: ["-lock", "false"]
-      - run: my-custom-command arg1 arg2
-    apply:
-      steps:
-      - run: echo hi
-      - apply
- ```
+```
 
 ## Casos de uso
 
@@ -238,8 +216,8 @@ projects:
 
 ### Ejecutar scripts antes de los workflows de Atlantis
 
-Si quiere ejecutar scripts que se ejecutarían antes de que Atlantis pueda ejecutar workflows predeterminados o
-personalizados, puede crear un `pre-workflow-hooks`:
+Si quiere ejecutar scripts en el clon del pull request antes de que Atlantis ejecute
+sus pasos (por ejemplo, para descifrar secretos o generar archivos de backend), puede crear un `pre-workflow-hooks`:
 
 ```yaml
 repos:
@@ -255,8 +233,8 @@ hooks de pre workflow.
 
 ### Ejecutar scripts después de los workflows de Atlantis
 
-Si quiere ejecutar scripts que se ejecutarían después de que Atlantis ejecute workflows predeterminados o
-personalizados, puede crear un `post-workflow-hooks`:
+Si quiere ejecutar scripts después de que Atlantis ejecute sus pasos (por ejemplo,
+Infracost sobre el plan), puede crear un `post-workflow-hooks`:
 
 ```yaml
 repos:
@@ -270,166 +248,75 @@ repos:
 Vea [Post Workflow Hooks](post-workflow-hooks.md) para más detalles sobre cómo escribir
 hooks de post workflow.
 
-### Cambiar el workflow predeterminado de Atlantis
+### Entradas nativas {#native-inputs}
 
-Si quiere cambiar los comandos predeterminados que Atlantis ejecuta durante las fases de `plan` y `apply`,
-puede crear un nuevo `workflow`.
-
-Si quiere usar ese workflow de manera predeterminada para todos los repos, use la
-clave de workflow `default`:
+`inputs` configura los pasos incorporados `init`, `plan` y `apply` sin workflows personalizados. Establézcalo en una entrada de repo del lado del servidor como valor predeterminado, y agregue `inputs` a `allowed_overrides` para que los proyectos en `atlantis.yaml` puedan reemplazarlo campo por campo.
 
 ```yaml
-# repos.yaml
-# NOTE: the repos key is not required.
-workflows:
-  # It's important that this is "default".
-  default:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-```
-
-Vea [Custom Workflows](custom-workflows.md) para más detalles sobre cómo escribir
-workflows personalizados.
-
-### Permitir que los repos elijan un workflow del lado del servidor
-
-Si quiere que los repos puedan elegir sus propios workflows que están definidos
-en la config de repo del lado del servidor, necesita crear los workflows
-del lado del servidor y luego permitir que cada repo sobrescriba la clave `workflow`:
-
-```yaml
-# repos.yaml
-# Allow repos to override the workflow key.
 repos:
-- id: /.*/
-  allowed_overrides: [workflow]
-
-# Define your custom workflows.
-workflows:
-  custom1:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-
-  custom2:
-    plan:
-      steps:
-      - run: another custom command
-    apply:
-      steps:
-      - run: another custom command
+  - id: /.*/
+    allowed_overrides: [inputs]
+    inputs:
+      var_files: [env/prod.tfvars]          # plan/import: -var-file, en orden
+      vars:                                 # plan/import: -var, ordenadas por nombre
+        region: eu-west-1
+      backend_config: [prod.backend.hcl]    # init: -backend-config, más -reconfigure
+      env:                                  # todos los pasos
+        TF_AWS_DEFAULT_TAGS_repository: "github.com/${BASE_REPO_OWNER}/${BASE_REPO_NAME}"
+      extra_args:                           # se agregan al paso incorporado
+        plan: [-lock-timeout=5m]
 ```
 
-O, si quiere restringir a qué workflows tiene acceso cada repo, use la
-clave `allowed_workflows`:
+- Las rutas son relativas al directorio del proyecto y no pueden salir del repositorio.
+- Las entradas de `backend_config` son archivos o pares `key=value`. `init` también recibe `-reconfigure`.
+- Los valores de `env` pueden usar `${BASE_REPO_OWNER}`, `${BASE_REPO_NAME}`, `${REPO_REL_DIR}`, `${WORKSPACE}`, `${PROJECT_NAME}`, `${PULL_NUM}` y `${HEAD_COMMIT}`.
+- Las claves de `extra_args` son pasos incorporados: `init`, `plan`, `apply`, `show`, `policy_check`, `import`, `state_rm`.
+
+### Terragrunt {#terragrunt}
+
+Establezca `tool: terragrunt` para ejecutar los pasos incorporados con [Terragrunt](https://terragrunt.gruntwork.io) en lugar de Terraform. Agregue `tool` a `allowed_overrides` para que los proyectos en `atlantis.yaml` puedan elegir.
 
 ```yaml
-# repos.yaml
-# Restrict which workflows repos can select.
 repos:
-- id: /.*/
-  allowed_overrides: [workflow]
-
-- id: /my_repo/
-  allowed_overrides: [workflow]
-  allowed_workflows: [custom1]
-
-# Define your custom workflows.
-workflows:
-  custom1:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
-
-  custom2:
-    plan:
-      steps:
-      - run: another custom command
-    apply:
-      steps:
-      - run: another custom command
+  - id: /.*/
+    allowed_overrides: [tool]
+    tool: terragrunt
 ```
 
-Entonces cada repo permitido puede elegir uno de los workflows en sus archivos `atlantis.yaml`:
+- Cada paso incorporado se ejecuta como `terragrunt run -- <comando>` con los mismos argumentos, por lo que `inputs`, los argumentos de comentarios, las verificaciones de policy y los archivos de plan funcionan igual que con Terraform.
+- Terragrunt usa el binario de Terraform u OpenTofu que Atlantis selecciona para el proyecto, mediante `TG_TF_PATH`.
+- El binario `terragrunt` debe estar en `PATH`. La imagen de Atlantis lo incluye en amd64 y arm64.
+
+Con el autodescubrimiento activado, Atlantis ejecuta `terragrunt find` y convierte cada unidad (un directorio con `terragrunt.hcl` que ninguna otra unidad incluye) en un proyecto. Una unidad hace autoplan cuando cambian sus archivos, los archivos que lee o los de las unidades de las que depende, y se planifica y aplica después de sus dependencias. Ya no se necesita terragrunt-atlantis-config. Los locals `atlantis_skip`, `atlantis_autoplan`, `atlantis_terraform_version` y `extra_atlantis_dependencies` (valores literales) ajustan cada unidad.
+
+### CDK Terrain {#cdk-terrain}
+
+Establezca `tool: cdktn` para planificar y aplicar apps de [CDK Terrain](https://github.com/open-constructs/cdk-terrain), la continuación comunitaria de CDK for Terraform. Una app es un directorio con un `cdktf.json`.
 
 ```yaml
-# atlantis.yaml
-version: 3
-projects:
-- dir: .
-  workflow: custom1 # could also be custom2 OR default
-```
-
-:::tip NOTA
-Siempre hay un workflow llamado `default` que corresponde al workflow predeterminado de Atlantis
-a menos que haya creado su propio workflow del lado del servidor con esa clave (sobrescribiéndolo).
-:::
-
-Vea [Custom Workflows](custom-workflows.md) para más detalles sobre cómo escribir
-workflows personalizados.
-
-### Permitir usar herramientas de policy personalizadas
-
-Conftest es la aplicación estándar de verificación de policy integrada con Atlantis, pero aún pueden ejecutarse herramientas personalizadas en workflows personalizados cuando la opción `custom_policy_check` está establecida. Vea la [página de Custom Policy Checks](custom-policy-checks.md) para ejemplos detallados.
-
-### Permitir que los repos definan sus propios workflows
-
-Si quiere que los repos puedan definir sus propios workflows necesita
-permitirles sobrescribir la clave `workflow` y establecer `allow_custom_workflows` en `true`.
-
-::: danger
-Si los repos pueden definir sus propios workflows, entonces cualquiera que pueda crear un pull
-request a ese repo puede esencialmente ejecutar código arbitrario en su servidor Atlantis.
-:::
-
-```yaml
-# repos.yaml
 repos:
-- id: /.*/
-
-  # With just allowed_overrides: [workflow], repos can only
-  # choose workflows defined server-side.
-  allowed_overrides: [workflow]
-
-  # By setting allow_custom_workflows to true, we allow repos to also
-  # define their own workflows.
-  allow_custom_workflows: true
+  - id: /.*/
+    tool: cdktn
 ```
 
-Entonces cada repo permitido puede definir y usar un workflow personalizado en sus archivos `atlantis.yaml`:
+- Atlantis sintetiza cada app una vez por commit con `cdktn synth --output cdktf.out` y ejecuta los pasos incorporados en el directorio sintetizado del stack.
+- Si la app tiene `package.json` y no `node_modules`, Atlantis ejecuta antes `npm ci` (o `npm install`) con `--ignore-scripts`.
+- Con el autodescubrimiento activado, cada stack se convierte en un proyecto con el nombre del stack, y los stacks se planifican y aplican después de los stacks de los que dependen. Para configurar un stack manualmente, use la clave `stack` en un proyecto de `atlantis.yaml`.
+- El binario `cdktn` y Node deben estar en `PATH`. Las imágenes completas de Atlantis los incluyen; las imágenes `-slim` no.
 
-```yaml
-# atlantis.yaml
-version: 3
-projects:
-- dir: .
-  workflow: custom1
-workflows:
-  custom1:
-    plan:
-      steps:
-      - init
-      - run: my custom plan command
-    apply:
-      steps:
-      - run: my custom apply command
+### Migrar workflows personalizados a entradas nativas {#migrating-custom-workflows-to-native-inputs}
+
+Los workflows personalizados (`workflows`, `workflow`, `allowed_workflows`, `allow_custom_workflows`), los pasos `run`, `env` y `multienv`, y `custom_policy_check` se eliminaron. Una configuración que todavía los use falla con un error que indica qué los reemplaza. `atlantis migrate-workflows` los convierte en `inputs` y `tool`:
+
+```shell
+atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml
+# revise los archivos impresos, luego:
+atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml --write --report migration.md
 ```
 
-Vea [Custom Workflows](custom-workflows.md) para más detalles sobre cómo escribir
-workflows personalizados.
+- Los pasos incorporados y sus argumentos, los valores fijos de env y los valores construidos con `echo "...$BASE_REPO_NAME..."` se convierten en inputs. Los comandos `terragrunt plan/apply` se convierten en `tool: terragrunt`.
+- Los demás comandos personalizados se eliminan y se listan en el informe. Los comandos que deben ejecutarse en el clon de Atlantis del pull request (descifrar secretos, generar archivos de backend, Infracost sobre el plan) van en [pre workflow hooks](pre-workflow-hooks.md) o [post workflow hooks](post-workflow-hooks.md) del lado del servidor, que la herramienta conserva.
+- Las verificaciones de policy usan solo Conftest.
 
 ### Múltiples servidores Atlantis manejan el mismo repositorio
 
@@ -488,7 +375,6 @@ Cada servidor maneja diferentes archivos de config del repositorio.
 | Key        | Type                                                  | Default   | Required | Description                                                                                                    |
 | ---------- | ----------------------------------------------------- | --------- | -------- | -------------------------------------------------------------------------------------------------------------- |
 | repos      | array[[Repo](#repo)]                                  | see below | no       | Lista de repos a los que aplicar la configuración.                                                             |
-| workflows  | map[string: [Workflow](custom-workflows.md#workflow)] | see below | no       | Mapa desde nombre de workflow a workflow. Los workflows sobrescriben los comandos predeterminados de Atlantis. |
 | policies   | Policies.                                             | none      | no       | Lista de policy sets a ejecutar y metadatos asociados                                                          |
 | metrics    | Metrics.                                              | none      | no       | Mapa de configuración de métricas                                                                              |
 | team_authz | [TeamAuthz](#teamauthz)                               | none      | no       | Configuración de la verificación de permisos de equipo                                                         |
@@ -506,26 +392,10 @@ repos:
   plan_requirements: []
   apply_requirements: []
   import_requirements: []
-  workflow: default
   allowed_overrides: []
-  allow_custom_workflows: false
-```
-
-#### `workflows`
-
-`workflows` siempre contiene el workflow predeterminado de Atlantis bajo la clave `default`:
-
-```yaml
-workflows:
-  default:
-    plan:
-      steps: [init, plan]
-    apply:
-      steps: [apply]
 ```
 
 Esto se fusiona con cualquier configuración que escriba.
-Si establece un workflow con la clave `default`, esto lo sobrescribirá.
 :::
 
 ### Repo
@@ -535,18 +405,16 @@ Si establece un workflow con la clave `default`, esto lo sobrescribirá.
 | id                            | string                  | none            | yes      | El valor puede ser una expresión regular cuando se especifica como /&lt;regex&gt;/ o una coincidencia exacta de string. Los ID de repo son de la forma `{vcs hostname}/{org}/{name}`, p. ej. `github.com/owner/repo`. El hostname se especifica sin scheme ni port. Para Bitbucket Server, {org} es el **nombre** del proyecto, no la clave.                                            |
 | branch                        | string                  | none            | no       | Una regex que coincide con pull requests por rama base (la rama en la que se está haciendo merge del pull request). Por defecto, coinciden todas las ramas                                                                                                                                                                                                                              |
 | repo_config_file              | string                  | none            | no       | Ruta del archivo de config del repo en este repo. Por defecto, use `atlantis.yaml` que está ubicado en la raíz del repositorio. Cuando múltiples servidores atlantis trabajan con el mismo repo, establezca diferentes nombres de archivo.                                                                                                                                              |
-| workflow                      | string                  | none            | no       | Un workflow personalizado.                                                                                                                                                                                                                                                                                                                                                              |
 | plan_requirements             | []string                | none            | no       | Requisitos que deben satisfacerse antes de que `atlantis plan` pueda ejecutarse. Actualmente los únicos requisitos soportados son `approved`, `mergeable` y `undiverged`. Vea [Command Requirements](command-requirements.md) para más detalles.                                                                                                                                        |
 | apply_requirements            | []string                | none            | no       | Requisitos que deben satisfacerse antes de que `atlantis apply` pueda ejecutarse. Actualmente los únicos requisitos soportados son `approved`, `mergeable` y `undiverged`. Vea [Command Requirements](command-requirements.md) para más detalles.                                                                                                                                       |
 | import_requirements           | []string                | none            | no       | Requisitos que deben satisfacerse antes de que `atlantis import` pueda ejecutarse. Actualmente los únicos requisitos soportados son `approved`, `mergeable` y `undiverged`. Vea [Command Requirements](command-requirements.md) para más detalles.                                                                                                                                      |
-| allowed_overrides             | []string                | none            | no       | Una lista de claves restringidas que los archivos `atlantis.yaml` pueden sobrescribir. Las únicas claves soportadas son `apply_requirements`, `workflow`, `delete_source_branch_on_merge`,`repo_locking`, `repo_locks` y `custom_policy_check`                                                                                                                                          |
-| allowed_workflows             | []string                | none            | no       | Una lista de workflows entre los que los archivos `atlantis.yaml` pueden seleccionar.                                                                                                                                                                                                                                                                                                   |
-| allow_custom_workflows        | bool                    | false           | no       | Si se permite o no [Custom Workflows](custom-workflows.md).                                                                                                                                                                                                                                                                                                                             |
+| allowed_overrides             | []string                | none            | no       | Una lista de claves restringidas que los archivos `atlantis.yaml` pueden sobrescribir. Las claves soportadas son `plan_requirements`, `apply_requirements`, `import_requirements`, `delete_source_branch_on_merge`, `repo_locking`, `repo_locks`, `policy_check`, `silence_pr_comments`, `inputs` y `tool`                                                                                                                                          |
+| inputs                        | [Inputs](#native-inputs)| none            | no       | Entradas nativas para los pasos incorporados: `var_files`, `vars`, `backend_config`, `env`, `extra_args`.                                                                                                                                                                                                                                                                                                                                           |
+| tool                          | string                  | `terraform`     | no       | Ejecuta los pasos incorporados con `terraform`, [`terragrunt`](#terragrunt) o [`cdktn`](#cdk-terrain).                                                                                                                                                                                                                                                                                                                                              |
 | delete_source_branch_on_merge | bool                    | false           | no       | Si se elimina o no la rama de origen al hacer merge.                                                                                                                                                                                                                                                                                                                                    |
 | repo_locking                  | bool                    | false           | no       | (obsoleto) Si se obtiene o no un lock.                                                                                                                                                                                                                                                                                                                                                  |
 | repo_locks                    | [RepoLocks](#repolocks) | `mode: on_plan` | no       | Si los locks del repositorio están habilitados o no para este proyecto en plan o apply. Vea [RepoLocks](#repolocks) para más detalles.                                                                                                                                                                                                                                                  |
 | policy_check                  | bool                    | false           | no       | Si se ejecutan o no policy checks en este repositorio.                                                                                                                                                                                                                                                                                                                                  |
-| custom_policy_check           | bool                    | false           | no       | Si se habilitan o no herramientas personalizadas de policy check fuera de Conftest en este repositorio.                                                                                                                                                                                                                                                                                 |
 | autodiscover                  | AutoDiscover            | none            | no       | Configuración de auto discover para este repo                                                                                                                                                                                                                                                                                                                                           |
 | silence_pr_comments           | []string                | none            | no       | Silencia los comentarios del PR de las etapas definidas mientras preserva las verificaciones de estado del PR. Útil en entornos grandes con muchas instancias de Atlantis y/o proyectos, cuando los comentarios son demasiado grandes y demasiados, por lo tanto es preferible depender únicamente de las verificaciones de estado del PR. Los valores soportados son: `plan`, `apply`. |
 
@@ -559,7 +427,7 @@ Si establece un workflow con la clave `default`, esto lo sobrescribirá.
   ```yaml
   repos:
   - id: /.*/
-    allow_custom_workflows: true
+    delete_source_branch_on_merge: true
     apply_requirements: [approved]
   - id: github.com/owner/repo
     apply_requirements: []
@@ -569,19 +437,16 @@ Si establece un workflow con la clave `default`, esto lo sobrescribirá.
 
   ```yaml
   apply_requirements: []
-  workflow: default
   allowed_overrides: []
-  allow_custom_workflows: true
+  delete_source_branch_on_merge: true
   ```
 
   Donde
   * `apply_requirements` se establece desde la config `id: github.com/owner/repo` porque
     sobrescribe la config coincidente previa de `id: /.*/`.
-  * `workflow` se establece desde la config predeterminada que siempre
-    existe.
   * `allowed_overrides` se establece desde la config predeterminada que siempre
     existe.
-  * `allow_custom_workflows` se establece desde la config `id: /.*/` y no se desactiva
+  * `delete_source_branch_on_merge` se establece desde la config `id: /.*/` y no se desactiva
     por la config `id: github.com/owner/repo` porque no definió esa clave.
 :::
 

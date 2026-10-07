@@ -1,7 +1,7 @@
 # Repo Level atlantis.yaml Config
 
 An `atlantis.yaml` file specified at the root of a Terraform repo allows you
-to instruct Atlantis on the structure of your repo and set custom workflows.
+to instruct Atlantis on the structure of your repo and set per-project settings.
 
 ## Do I need an atlantis.yaml file?
 
@@ -27,12 +27,12 @@ more details.
 
 ::: danger DANGER
 Atlantis uses the `atlantis.yaml` version from the pull request, similar to other
-CI/CD systems. If you're allowing users to [create custom workflows](server-side-repo-config.md#allow-repos-to-define-their-own-workflows)
-then this means
-anyone that can create a pull request to your repo can run arbitrary code on the
-Atlantis server.
-
-By default, this is not allowed.
+CI/CD systems. Projects always run the built-in steps, and restricted keys such
+as `inputs` and `tool` only take effect when the server-side config lists them in
+[`allowed_overrides`](server-side-repo-config.md#repos-can-set-their-own-native-inputs-or-tool).
+Workflow hooks can only be set in the server-side config. Terraform itself still
+runs the code in the pull request, for example providers and external data
+sources.
 :::
 
 ::: warning
@@ -74,7 +74,6 @@ projects:
   repo_locking: true # deprecated: use repo_locks instead, Available since v0.17.0
   repo_locks: # Available since v0.17.0
     mode: on_plan
-  custom_policy_check: false # Available since v0.17.0
   autoplan: # Available since v0.1.0
     when_modified: ["*.tf", "../modules/**/*.tf", ".terraform.lock.hcl"]
     enabled: true
@@ -85,23 +84,11 @@ projects:
   execution_order_group: 1 # Available since v0.17.0
   depends_on: # Available since v0.20.0
     - project-1
-  workflow: myworkflow # Available since v0.17.0
-workflows: # Available since v0.1.0
-  myworkflow:
-    plan:
-      steps:
-      - run: my-custom-command arg1 arg2
-      - run:
-          command: my-custom-command arg1 arg2
-          output: hide
-      - init
-      - plan:
-          extra_args: ["-lock", "false"]
-      - run: my-custom-command arg1 arg2
-    apply:
-      steps:
-      - run: echo hi
-      - apply
+  inputs: # needs allowed_overrides: [inputs] on the server
+    var_files: [prod.tfvars]
+    extra_args:
+      plan: ["-lock=false"]
+  tool: terraform # needs allowed_overrides: [tool] on the server
 allowed_regexp_prefixes: # Available since v0.19.0
 - dev/
 - staging/
@@ -114,7 +101,6 @@ projects:
    - &template
      name: template
      dir: template
-     workflow: custom
      autoplan:
         enabled: true
         when_modified:
@@ -248,7 +234,7 @@ atlantis apply -w staging -d project1
 
 ### Using .tfvars files
 
-Use [native inputs](server-side-repo-config.md#native-inputs) instead of a custom workflow:
+Set them with [native inputs](server-side-repo-config.md#native-inputs):
 
 ```yaml
 projects:
@@ -270,19 +256,25 @@ See [Terragrunt](server-side-repo-config.md#terragrunt).
 
 ### Adding extra arguments to Terraform commands
 
-See [Custom Workflow Use Cases: Adding extra arguments to Terraform commands](custom-workflows.md#adding-extra-arguments-to-terraform-commands)
+Set `extra_args` in [native inputs](server-side-repo-config.md#native-inputs).
+Keys are built-in steps: `init`, `plan`, `apply`, `show`, `policy_check`,
+`import` and `state_rm`.
 
-### Custom init/plan/apply Commands
-
-See [Custom Workflow Use Cases: Custom init/plan/apply Commands](custom-workflows.md#custom-init-plan-apply-commands)
-
-### Terragrunt
-
-See [Custom Workflow Use Cases: Terragrunt](custom-workflows.md#terragrunt)
+```yaml
+projects:
+- dir: project1
+  inputs:                        # needs allowed_overrides: [inputs] on the server
+    extra_args:
+      plan: ["-lock-timeout=5m"]
+      apply: ["-lock-timeout=5m"]
+```
 
 ### Running custom commands
 
-See [Custom Workflow Use Cases: Running custom commands](custom-workflows.md#running-custom-commands)
+Projects run only the built-in steps. Commands that must run in Atlantis's clone
+of the pull request, such as decrypting secrets, go in server-side
+[pre workflow hooks](pre-workflow-hooks.md) or
+[post workflow hooks](post-workflow-hooks.md).
 
 ### Terraform Distributions
 
@@ -368,7 +360,8 @@ projects:
         when_modified: ["*.tf", "vars/development.tfvars"]
      execution_order_group: 1
      workspace: development
-     workflow: infra
+     inputs:
+        var_files: [vars/development.tfvars]
    - name: staging
      dir: .
      autoplan:
@@ -376,7 +369,8 @@ projects:
      depends_on: ["development"]
      execution_order_group: 2
      workspace: staging
-     workflow: infra
+     inputs:
+        var_files: [vars/staging.tfvars]
    - name: production
      dir: .
      autoplan:
@@ -384,7 +378,8 @@ projects:
      depends_on: ["staging"]
      execution_order_group: 3
      workspace: production
-     workflow: infra
+     inputs:
+        var_files: [vars/production.tfvars]
 ```
 
 the `depends_on` feature will make sure that `production` is not applied before `staging` for example.
@@ -449,7 +444,7 @@ This makes `ignore_paths` useful for **multi-instance setups** where each Atlant
 
 ### Custom Backend Config
 
-Use [native inputs](server-side-repo-config.md#native-inputs) instead of a custom workflow:
+Set them with [native inputs](server-side-repo-config.md#native-inputs):
 
 ```yaml
 projects:
@@ -468,7 +463,6 @@ version: 3
 automerge: false
 delete_source_branch_on_merge: false
 projects:
-workflows:
 allowed_regexp_prefixes:
 ```
 
@@ -478,7 +472,6 @@ allowed_regexp_prefixes:
 | automerge                     | bool                                                   | `false` | no       | Automatically merges pull request when all plans are applied.                                                                      |
 | delete_source_branch_on_merge | bool                                                   | `false` | no       | Automatically deletes the source branch on merge.                                                                                  |
 | projects                      | array[[Project](repo-level-atlantis-yaml.md#project)]  | `[]`    | no       | Lists the projects in this repo.                                                                                                   |
-| workflows<br />_(restricted)_ | map[string: [Workflow](custom-workflows.md#reference)] | `{}`    | no       | Custom workflows.                                                                                                                  |
 | allowed_regexp_prefixes       | array\[string\]                                        | `[]`    | no       | Lists the allowed regexp prefixes to use when the [`--enable-regexp-cmd`](server-configuration.md#enable-regexp-cmd) flag is used. |
 
 ### Project
@@ -493,14 +486,15 @@ delete_source_branch_on_merge: false
 repo_locking: true # deprecated: use repo_locks instead
 repo_locks:
    mode: on_plan
-custom_policy_check: false
 autoplan:
 terraform_version: 0.11.0
 plan_requirements: ["approved"]
 apply_requirements: ["approved"]
 import_requirements: ["approved"]
 silence_pr_comments: ["apply"]
-workflow: myworkflow
+inputs:
+tool: terraform
+stack:
 ```
 
 | Key                                     | Type                    | Default         | Required | Description                                                                                                                                                                                                                             |
@@ -513,14 +507,12 @@ workflow: myworkflow
 | delete_source_branch_on_merge           | bool                    | `false`         | no       | Automatically deletes the source branch on merge.                                                                                                                                                                                       |
 | repo_locking                            | bool                    | `true`          | no       | (deprecated) Get a repository lock in this project when plan.                                                                                                                                                                           |
 | repo_locks                              | [RepoLocks](#repolocks) | `mode: on_plan` | no       | Get a repository lock in this project on plan or apply. See [RepoLocks](#repolocks) for more details.                                                                                                                                   |
-| custom_policy_check                     | bool                    | `false`         | no       | Enable using policy check tools other than Conftest                                                                                                                                                                                     |
 | autoplan                                | [Autoplan](#autoplan)   | none            | no       | A custom autoplan configuration. If not specified, will use the autoplan config. See [Autoplanning](autoplanning.md).                                                                                                                   |
 | terraform_version                       | string                  | none            | no       | A specific Terraform version to use when running commands for this project. Must be [Semver compatible](https://semver.org/), ex. `v0.11.0`, `0.12.0-beta1`.                                                                            |
 | plan_requirements<br />_(restricted)_   | array\[string\]         | none            | no       | Requirements that must be satisfied before `atlantis plan` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details.   |
 | apply_requirements<br />_(restricted)_  | array\[string\]         | none            | no       | Requirements that must be satisfied before `atlantis apply` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details.  |
 | import_requirements<br />_(restricted)_ | array\[string\]         | none            | no       | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | silence_pr_comments                     | array\[string\]         | none            | no       | Silence PR comments from defined stages while preserving PR status checks. Supported values are: `plan`, `apply`.                                                                                                                       |
-| workflow <br />_(restricted)_           | string                  | none            | no       | A custom workflow. If not specified, Atlantis will use its default workflow.                                                                                                                                                            |
 | inputs <br />_(restricted)_             | [Inputs](server-side-repo-config.md#native-inputs)| none            | no       | Native inputs for the built-in steps, replacing the server-side ones field by field. Needs `allowed_overrides: [inputs]`.                                                                                                               |
 | tool <br />_(restricted)_               | string                  | `terraform`     | no       | Runs the built-in steps with `terraform`, `terragrunt` or `cdktn`. See [Terragrunt](server-side-repo-config.md#terragrunt) and [CDK Terrain](server-side-repo-config.md#cdk-terrain). Needs `allowed_overrides: [tool]`.                                                                                   |
 | stack                                   | string                  | none            | no       | The [CDK Terrain](server-side-repo-config.md#cdk-terrain) stack the project plans, for `tool: cdktn`. May be left out when the app has one stack.                                                                                       |
@@ -528,7 +520,7 @@ workflow: myworkflow
 ::: tip
 A project represents a Terraform state. Typically, there is one state per directory and workspace however it's possible to
 have multiple states in the same directory using `terraform init -backend-config=custom-config.tfvars`.
-Atlantis supports this but requires the `name` key to be specified. See [Custom Backend Config](custom-workflows.md#custom-backend-config) for more details.
+Atlantis supports this but requires the `name` key to be specified. See [Custom Backend Config](#custom-backend-config) for more details.
 :::
 
 ### Autoplan

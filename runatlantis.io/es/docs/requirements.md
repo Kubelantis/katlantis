@@ -117,8 +117,8 @@ Esto no requiere configuración adicional y funciona automáticamente.
 #### Archivos .tfvars personalizados con atlantis.yaml
 
 Para otras ubicaciones o estructuras de archivos `.tfvars`, necesita crear
-un archivo `atlantis.yaml` para decirle a Atlantis que use `-var-file={YOUR_FILE}`.
-Vea [atlantis.yaml Use Cases](custom-workflows.md#tfvars-files) para más detalles.
+un archivo `atlantis.yaml` con `inputs.var_files` para decirle a Atlantis que use `-var-file={YOUR_FILE}`.
+Vea [Entradas nativas](server-side-repo-config.md#native-inputs) para más detalles.
 
 ### Múltiples Repos
 

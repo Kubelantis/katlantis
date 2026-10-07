@@ -1,9 +1,9 @@
 # Post Workflow Hooks
 
-Los post workflow hooks pueden definirse para ejecutar scripts después de que se ejecuten workflows predeterminados o personalizados. Los post workflow hooks difieren de los [custom
-workflows](custom-workflows.md#custom-run-command) en que se ejecutan
-fuera de los comandos de Atlantis. Lo que significa que no muestran su salida
-de vuelta al PR como un comentario.
+Los post workflow hooks pueden definirse para ejecutar scripts en el clon del pull request
+después de que Atlantis ejecute sus pasos incorporados. Se ejecutan una vez por comando en la
+raíz del repositorio, fuera de los comandos de Atlantis, por lo que no muestran su salida de
+vuelta al PR como un comentario. Solo el administrador de Atlantis puede definirlos.
 
 ## Uso
 
@@ -33,29 +33,29 @@ repos:
 
 ## Casos de uso
 
+Usos habituales que necesitan el clon de Atlantis después del plan:
+
+- Ejecutar Infracost sobre el plan y publicar la diferencia de costo.
+- Subir el plan en JSON a un bucket de auditoría.
+
+Las notificaciones de apply pueden enviarse con [webhooks](sending-notifications-via-webhooks.md).
+
 ### Reporte de estimación de costos
 
-Puede agregar un post workflow hook para realizar reportes personalizados después de que todos los workflows
-hayan terminado.
-
-En este ejemplo usamos un custom workflow para generar estimaciones de costo para cada
-workflow usando [Infracost](https://www.infracost.io/docs/integrations/cicd/#cicd-integrations), luego crear un reporte de resumen después de que todos los workflows se hayan completado.
+En este ejemplo, un post workflow hook genera estimaciones de costo con
+[Infracost](https://www.infracost.io/docs/integrations/cicd/#cicd-integrations) para el
+repositorio clonado después de cada plan y crea un reporte de resumen.
 
 ```yaml
 # repos.yaml
-workflows:
-  myworkflow:
-    plan:
-      steps:
-      - init
-      - plan
-      - run: infracost breakdown --path=$PLANFILE --format=json --out-file=/tmp/$BASE_REPO_OWNER-$BASE_REPO_NAME-$PULL_NUM-$WORKSPACE-$REPO_REL_DIR-infracost.json
 repos:
   - id: /.*/
-    workflow: myworkflow
     post_workflow_hooks:
-      - run: infracost output --path=/tmp/$BASE_REPO_OWNER-$BASE_REPO_NAME-$PULL_NUM-*-infracost.json --format=github-comment --out-file=/tmp/infracost-comment.md
+      - run: |
+          infracost breakdown --path=$DIR --format=json --out-file=/tmp/$BASE_REPO_OWNER-$BASE_REPO_NAME-$PULL_NUM-infracost.json
+          infracost output --path=/tmp/$BASE_REPO_OWNER-$BASE_REPO_NAME-$PULL_NUM-infracost.json --format=github-comment --out-file=/tmp/infracost-comment.md
         description: Running infracost
+        commands: plan
       # Now report the output as desired, e.g. post to GitHub as a comment.
       # ...
 ```
@@ -82,9 +82,6 @@ repos:
 ## Referencia
 
 ### Comando `run` personalizado
-
-Esto es muy similar al [custom workflow run
-command](custom-workflows.md#custom-run-command).
 
 ```yaml
 - run: custom-command
