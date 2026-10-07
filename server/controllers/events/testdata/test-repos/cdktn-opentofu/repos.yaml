@@ -1,0 +1,4 @@
+repos:
+- id: /.*/
+  tool: cdktn
+  terraform_distribution: opentofu

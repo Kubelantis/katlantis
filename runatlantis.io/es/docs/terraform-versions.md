@@ -70,7 +70,8 @@ de los archivos `.tofu` e `.tofu.json` además de `.tf` e `.tf.json`. La distrib
 efectiva es OpenTofu cuando ocurre cualquiera de estos casos:
 
 - Un proyecto configura `terraform_distribution: opentofu` en `atlantis.yaml`
-- El valor predeterminado del servidor es `--default-tf-distribution=opentofu` y el proyecto no lo sobrescribe
+- La entrada del repositorio del lado del servidor configura [`terraform_distribution: opentofu`](server-side-repo-config.md#opentofu) y el proyecto no lo sobrescribe
+- El valor predeterminado del servidor es `--default-tf-distribution=opentofu` y ninguno de los anteriores lo sobrescribe
 
 Si un proyecto configura explícitamente `terraform_distribution: terraform`, Atlantis usa la
 ruta de detección de versión de Terraform (solo `.tf` / `.tf.json`) incluso si el valor predeterminado del servidor es OpenTofu.

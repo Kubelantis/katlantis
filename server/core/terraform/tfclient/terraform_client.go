@@ -66,6 +66,10 @@ type DefaultClient struct {
 	// overrideTF can be used to override the terraform binary during testing
 	// with another binary, ex. echo.
 	overrideTF string
+	// otherDefaults caches the default version of the distribution that is
+	// not the server default, keyed by binary name.
+	otherDefaultsLock sync.Mutex
+	otherDefaults     map[string]*version.Version
 	// overrideTerragrunt replaces the terragrunt binary during testing.
 	overrideTerragrunt string
 	// cdktn synthesizes CDK Terrain apps; cdktn.Default when nil.
@@ -136,7 +140,7 @@ func NewClientWithDefaultVersion(
 		if err != nil {
 			return nil, err
 		}
-		versions[localVersion.String()] = localPath
+		versions[versionKey(distribution, localVersion)] = localPath
 		if defaultVersionStr == "" {
 
 			// If they haven't set a default version, then whatever they had
@@ -679,15 +683,15 @@ func findOrDownloadVersionBinaryPath(
 	downloadURL string,
 	downloadsAllowed bool,
 ) (string, error) {
-	if binPath, ok := getVersionBinaryPath(versions, versionsLock, v); ok {
+	if binPath, ok := getVersionBinaryPath(versions, versionsLock, dist, v); ok {
 		return binPath, nil
 	}
 
-	versionLock := getVersionOperationLock(versionLocks, versionsLock, v)
+	versionLock := getVersionOperationLock(versionLocks, versionsLock, dist, v)
 	versionLock.Lock()
 	defer versionLock.Unlock()
 
-	if binPath, ok := getVersionBinaryPath(versions, versionsLock, v); ok {
+	if binPath, ok := getVersionBinaryPath(versions, versionsLock, dist, v); ok {
 		return binPath, nil
 	}
 
@@ -696,7 +700,7 @@ func findOrDownloadVersionBinaryPath(
 	// terraform{version} binaries. In this case we don't want to re-download.
 	binFile := dist.BinName() + v.String()
 	if binPath, err := exec.LookPath(binFile); err == nil {
-		setVersionBinaryPath(versions, versionsLock, v, binPath)
+		setVersionBinaryPath(versions, versionsLock, dist, v, binPath)
 		return binPath, nil
 	}
 
@@ -704,7 +708,7 @@ func findOrDownloadVersionBinaryPath(
 	// This could happen if Atlantis was restarted without losing its disk.
 	dest := filepath.Join(binDir, binFile)
 	if _, err := os.Stat(dest); err == nil {
-		setVersionBinaryPath(versions, versionsLock, v, dest)
+		setVersionBinaryPath(versions, versionsLock, dist, v, dest)
 		return dest, nil
 	}
 	if !downloadsAllowed {
@@ -721,7 +725,7 @@ func findOrDownloadVersionBinaryPath(
 	if err != nil {
 		return "", err
 	}
-	setVersionBinaryPath(versions, versionsLock, v, execPath)
+	setVersionBinaryPath(versions, versionsLock, dist, v, execPath)
 	return execPath, nil
 }
 
@@ -737,18 +741,18 @@ func redownloadVersionBinary(
 	binDir string,
 	downloadURL string,
 ) (string, error) {
-	versionLock := getVersionOperationLock(versionLocks, versionsLock, v)
+	versionLock := getVersionOperationLock(versionLocks, versionsLock, dist, v)
 	versionLock.Lock()
 	defer versionLock.Unlock()
 
-	if currentPath, ok := getVersionBinaryPath(versions, versionsLock, v); ok && currentPath != binPath {
+	if currentPath, ok := getVersionBinaryPath(versions, versionsLock, dist, v); ok && currentPath != binPath {
 		return currentPath, nil
 	} else if ok {
 		if err := validateVersionBinary(currentPath, dist.BinName()); err == nil {
 			return currentPath, nil
 		}
 	}
-	deleteVersionBinaryPath(versions, versionsLock, v, binPath)
+	deleteVersionBinaryPath(versions, versionsLock, dist, v, binPath)
 	if isManagedVersionBinary(binPath, binDir) {
 		if err := os.Remove(binPath); err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("removing cached %s binary for redownload at %s: %w", dist.BinName(), binPath, err)
@@ -759,7 +763,7 @@ func redownloadVersionBinary(
 	if err != nil {
 		return "", err
 	}
-	setVersionBinaryPath(versions, versionsLock, v, execPath)
+	setVersionBinaryPath(versions, versionsLock, dist, v, execPath)
 	return execPath, nil
 }
 
@@ -785,11 +789,18 @@ func downloadVersionBinary(
 	return execPath, nil
 }
 
-func getVersionOperationLock(versionLocks map[string]*sync.Mutex, versionsLock *sync.Mutex, v *version.Version) *sync.Mutex {
+// versionKey identifies a binary in the version cache. Terraform and
+// OpenTofu share version numbers (both have 1.9.x), so the distribution is
+// part of the key: otherwise a project could run the other engine.
+func versionKey(dist terraform.Distribution, v *version.Version) string {
+	return dist.BinName() + "@" + v.String()
+}
+
+func getVersionOperationLock(versionLocks map[string]*sync.Mutex, versionsLock *sync.Mutex, dist terraform.Distribution, v *version.Version) *sync.Mutex {
 	versionsLock.Lock()
 	defer versionsLock.Unlock()
 
-	lockKey := v.String()
+	lockKey := versionKey(dist, v)
 	versionLock, ok := versionLocks[lockKey]
 	if !ok {
 		versionLock = &sync.Mutex{}
@@ -798,24 +809,24 @@ func getVersionOperationLock(versionLocks map[string]*sync.Mutex, versionsLock *
 	return versionLock
 }
 
-func getVersionBinaryPath(versions map[string]string, versionsLock *sync.Mutex, v *version.Version) (string, bool) {
+func getVersionBinaryPath(versions map[string]string, versionsLock *sync.Mutex, dist terraform.Distribution, v *version.Version) (string, bool) {
 	versionsLock.Lock()
 	defer versionsLock.Unlock()
-	binPath, ok := versions[v.String()]
+	binPath, ok := versions[versionKey(dist, v)]
 	return binPath, ok
 }
 
-func setVersionBinaryPath(versions map[string]string, versionsLock *sync.Mutex, v *version.Version, binPath string) {
+func setVersionBinaryPath(versions map[string]string, versionsLock *sync.Mutex, dist terraform.Distribution, v *version.Version, binPath string) {
 	versionsLock.Lock()
 	defer versionsLock.Unlock()
-	versions[v.String()] = binPath
+	versions[versionKey(dist, v)] = binPath
 }
 
-func deleteVersionBinaryPath(versions map[string]string, versionsLock *sync.Mutex, v *version.Version, binPath string) {
+func deleteVersionBinaryPath(versions map[string]string, versionsLock *sync.Mutex, dist terraform.Distribution, v *version.Version, binPath string) {
 	versionsLock.Lock()
 	defer versionsLock.Unlock()
-	if versions[v.String()] == binPath {
-		delete(versions, v.String())
+	if versions[versionKey(dist, v)] == binPath {
+		delete(versions, versionKey(dist, v))
 	}
 }
 
@@ -896,3 +907,37 @@ func terraformVersionEnv(env []string) []string {
 var rcFileContents = `credentials "%s" {
   token = %q
 }`
+
+// DefaultVersionFor returns the version a project uses when it picks the
+// distribution that is not the server default and no version is pinned or
+// detected: the binary on PATH, else the latest stable release when downloads
+// are allowed. For the server default distribution it returns nil, so the
+// default version applies.
+func (c *DefaultClient) DefaultVersionFor(log logging.SimpleLogging, d terraform.Distribution) *version.Version {
+	if d == nil || c.distribution == nil || d.BinName() == c.distribution.BinName() {
+		return nil
+	}
+	c.otherDefaultsLock.Lock()
+	defer c.otherDefaultsLock.Unlock()
+	if v, ok := c.otherDefaults[d.BinName()]; ok {
+		return v
+	}
+	var v *version.Version
+	if p, err := exec.LookPath(d.BinName()); err == nil {
+		if v, err = getVersion(p, d.BinName()); err != nil {
+			log.Warn("reading the %s version: %s", d.BinName(), err)
+		}
+	}
+	if v == nil && c.downloadAllowed {
+		var err error
+		if v, err = d.ResolveConstraint(context.Background(), ">= 1.0.0"); err != nil {
+			log.Warn("finding the latest %s release: %s", d.BinName(), err)
+			return nil
+		}
+	}
+	if c.otherDefaults == nil {
+		c.otherDefaults = map[string]*version.Version{}
+	}
+	c.otherDefaults[d.BinName()] = v
+	return v
+}

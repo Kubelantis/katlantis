@@ -142,14 +142,15 @@ func dropReason(cmd string) string {
 // built-in step and its extra args. Arguments the built-in step adds itself
 // are removed. tool is "terragrunt" for `terragrunt plan ...` and
 // `terragrunt run -- plan ...`, whose own flags Atlantis sets through the
-// environment. ok is false when the command does more than that.
+// environment, and "tofu" for `tofu plan ...`. ok is false when the command
+// does more than that.
 func builtinArgsFromCommand(cmd string) (tool, step string, args []string, ok bool) {
 	m := builtinCmdRe.FindStringSubmatch(cmd)
 	if m == nil || shellMeta.MatchString(cmd) {
 		return "", "", nil, false
 	}
-	if m[1] == "terragrunt" {
-		tool = "terragrunt"
+	if m[1] == "terragrunt" || m[1] == "tofu" {
+		tool = m[1]
 	}
 	fields := strings.Fields(m[3])
 	for i := 0; i < len(fields); i++ {

@@ -1,0 +1,4 @@
+repos:
+- id: /.*/
+  tool: terragrunt
+  terraform_distribution: opentofu

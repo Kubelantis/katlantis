@@ -72,13 +72,17 @@ func convertWorkflows(file string, top *yaml.Node) (map[string]Inputs, []Note) {
 
 // describe names what replaced a workflow.
 func (in Inputs) describe() string {
-	switch {
-	case in.hasInputs() && in.Tool != "":
-		return "inputs and tool: " + in.Tool
-	case in.Tool != "":
-		return "tool: " + in.Tool
+	var parts []string
+	if in.hasInputs() {
+		parts = append(parts, "inputs")
 	}
-	return "inputs"
+	if in.Tool != "" {
+		parts = append(parts, "tool: "+in.Tool)
+	}
+	if in.Distribution != "" {
+		parts = append(parts, "terraform_distribution: "+in.Distribution)
+	}
+	return strings.Join(parts, " and ")
 }
 
 // usesTool reports whether any converted workflow sets a tool.

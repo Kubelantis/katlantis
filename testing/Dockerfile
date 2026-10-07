@@ -19,6 +19,17 @@ RUN case "$(uname -m)" in x86_64|amd64) ARCH="amd64" ;; aarch64|arm64|armv7l) AR
     ln -s /usr/local/bin/tf/versions/${TERRAFORM_VERSION}/terraform /usr/local/bin/terraform && \
     rm "${TERRAFORM_ARCHIVE}" terraform_SHA256SUMS
 
+# Install OpenTofu
+# renovate: datasource=github-releases depName=opentofu/opentofu versioning=hashicorp
+ENV OPENTOFU_VERSION=1.12.6
+RUN case "$(uname -m)" in x86_64|amd64) ARCH="amd64" ;; aarch64|arm64) ARCH="arm64" ;; *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; esac && \
+    TOFU_ARCHIVE="tofu_${OPENTOFU_VERSION}_linux_${ARCH}.zip" && \
+    wget -nv "https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/${TOFU_ARCHIVE}" && \
+    wget -nv -O tofu_SHA256SUMS "https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_SHA256SUMS" && \
+    grep " ${TOFU_ARCHIVE}$" tofu_SHA256SUMS | sha256sum -c - && \
+    unzip "${TOFU_ARCHIVE}" tofu -d /usr/local/bin && \
+    rm "${TOFU_ARCHIVE}" tofu_SHA256SUMS
+
 # Install conftest
 # renovate: datasource=github-releases depName=open-policy-agent/conftest
 ENV CONFTEST_VERSION=0.69.0

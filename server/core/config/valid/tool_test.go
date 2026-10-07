@@ -53,3 +53,17 @@ func TestStackIsMerged(t *testing.T) {
 	Equals(t, valid.ToolCdktn, m.Tool)
 	Equals(t, "network", m.Stack)
 }
+
+func TestTerraformDistributionFromServerSideRepo(t *testing.T) {
+	tofu, tf := "opentofu", "terraform"
+	g := valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{})
+	g.Repos = append(g.Repos, valid.Repo{IDRegex: regexp.MustCompile(".*"), TerraformDistribution: &tofu})
+	log := logging.NewNoopLogger(t)
+
+	Equals(t, &tofu, g.MergeProjectCfg(log, "github.com/org/repo", valid.Project{Dir: "."}, valid.RepoCfg{}).TerraformDistribution)
+	Equals(t, &tofu, g.DefaultProjCfg(log, "github.com/org/repo", ".", "default").TerraformDistribution)
+	// The project's own setting wins.
+	Equals(t, &tf, g.MergeProjectCfg(log, "github.com/org/repo", valid.Project{Dir: ".", TerraformDistribution: &tf}, valid.RepoCfg{}).TerraformDistribution)
+	// No server-side setting leaves the server default.
+	Assert(t, valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{}).DefaultProjCfg(log, "github.com/org/repo", ".", "default").TerraformDistribution == nil, "expected the server default")
+}

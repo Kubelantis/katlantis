@@ -3,6 +3,7 @@ package migrate
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 
@@ -47,11 +48,14 @@ type Inputs struct {
 	// Tool is "terragrunt" when the workflow ran Terragrunt. It becomes the
 	// `tool` key next to inputs, not part of them.
 	Tool string
+	// Distribution is "opentofu" when the workflow ran OpenTofu. It becomes
+	// the `terraform_distribution` key next to inputs.
+	Distribution string
 }
 
 // IsZero reports whether neither inputs nor a tool were produced.
 func (in Inputs) IsZero() bool {
-	return !in.hasInputs() && in.Tool == ""
+	return !in.hasInputs() && in.Tool == "" && in.Distribution == ""
 }
 
 func (in Inputs) hasInputs() bool {
@@ -65,6 +69,9 @@ func (in Inputs) applyTo(m *yaml.Node) {
 	}
 	if in.Tool != "" {
 		mapSet(m, "tool", scalar(in.Tool))
+	}
+	if in.Distribution != "" {
+		mapSet(m, "terraform_distribution", scalar(in.Distribution))
 	}
 }
 
@@ -251,9 +258,14 @@ func (c *workflowConverter) run(s Step, loc string) {
 	}
 	if tool, step, args, ok := builtinArgsFromCommand(s.Command); ok {
 		c.builtin(s.Stage, step, args, loc)
-		if tool != "" {
+		switch tool {
+		case "terragrunt":
 			c.in.Tool = tool
 			c.note(loc, Converted, fmt.Sprintf("replaced by the built-in %s step with tool: %s", step, tool), s.Command)
+			return
+		case "tofu":
+			c.in.Distribution = "opentofu"
+			c.note(loc, Converted, fmt.Sprintf("replaced by the built-in %s step with terraform_distribution: opentofu", step), s.Command)
 			return
 		}
 		c.note(loc, Converted, fmt.Sprintf("replaced by the built-in %s step", step), s.Command)
@@ -273,6 +285,13 @@ func (c *workflowConverter) env(s Step, loc string) {
 	}
 	if !ok {
 		c.note(loc, Removed, fmt.Sprintf("env %s is computed by a command; set a fixed or templated value in inputs.env", s.EnvName), s.Command)
+		return
+	}
+	// Terragrunt pointed at OpenTofu is the opentofu distribution: Atlantis
+	// sets TG_TF_PATH to the binary it resolved for the project.
+	if (s.EnvName == "TG_TF_PATH" || s.EnvName == "TERRAGRUNT_TFPATH") && path.Base(value) == "tofu" {
+		c.in.Distribution = "opentofu"
+		c.note(loc, Converted, "env "+s.EnvName+" replaced by terraform_distribution: opentofu", s.Command)
 		return
 	}
 	if c.in.Env == nil {

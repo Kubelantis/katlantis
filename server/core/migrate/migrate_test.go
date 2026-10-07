@@ -222,3 +222,37 @@ func TestTerragruntWithPlainBuiltinsNeedsReview(t *testing.T) {
 	}
 	Assert(t, strings.Contains(strings.Join(review, "\n"), "now run through terragrunt too"), "missing review note: %v", review)
 }
+
+func TestTofuRunStepsBecomeOpenTofuDistribution(t *testing.T) {
+	src := `repos:
+- id: /.*/
+  workflow: tofu
+workflows:
+  tofu:
+    plan:
+      steps:
+      - run: tofu init -upgrade
+      - run: tofu plan -input=false -out $PLANFILE
+    apply:
+      steps:
+      - run: tofu apply $PLANFILE
+  tg-tofu:
+    plan:
+      steps:
+      - env:
+          name: TERRAGRUNT_TFPATH
+          value: tofu
+      - run: terragrunt plan -out $PLANFILE
+`
+	r, err := migrate.MigrateServerConfig("repos.yaml", []byte(src))
+	Ok(t, err)
+	Equals(t, "opentofu", r.Workflows["tofu"].Distribution)
+	Equals(t, []string{"-upgrade"}, r.Workflows["tofu"].ExtraArgs["init"])
+	Equals(t, "opentofu", r.Workflows["tg-tofu"].Distribution)
+	Equals(t, "terragrunt", r.Workflows["tg-tofu"].Tool)
+	Equals(t, 0, len(r.Workflows["tg-tofu"].Env))
+	Equals(t, 0, len(notesWith(r.Notes, migrate.Removed)))
+	Assert(t, strings.Contains(string(r.Output), "terraform_distribution: opentofu"), "output:\n%s", r.Output)
+	_, err = (&cfg.ParserValidator{}).ParseGlobalCfg(writeTemp(t, r.Output), valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{}))
+	Ok(t, err)
+}

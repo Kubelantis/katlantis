@@ -60,7 +60,9 @@ Atlantis will automatically download the latest version that fulfills the constr
 A `terraform_version` specified in the `atlantis.yaml` file takes precedence over both the [`--default-tf-version`](server-configuration.md#default-tf-version) flag and the `required_version` in the terraform hcl.
 When a project sets `terraform_distribution`, Atlantis resolves the `required_version`
 constraint against that distribution. For example, an OpenTofu project resolves to an
-OpenTofu version instead of a Terraform version.
+OpenTofu version instead of a Terraform version. A project on the distribution that is not
+the server default, with no version set, uses that distribution's binary on `PATH` (or its
+latest release) rather than the `--default-tf-version`.
 :::
 
 ## OpenTofu `.tofu` file support
@@ -70,7 +72,8 @@ from `.tofu` and `.tofu.json` files in addition to `.tf` and `.tf.json`. The eff
 distribution is OpenTofu when either:
 
 - A project sets `terraform_distribution: opentofu` in `atlantis.yaml`
-- The server default is `--default-tf-distribution=opentofu` and the project does not override it
+- The matching server-side repo entry sets [`terraform_distribution: opentofu`](server-side-repo-config.md#opentofu) and the project does not override it
+- The server default is `--default-tf-distribution=opentofu` and neither of the above overrides it
 
 If a project explicitly sets `terraform_distribution: terraform`, Atlantis uses the
 Terraform version-detection path (`.tf` / `.tf.json` only) even if the server default is OpenTofu.

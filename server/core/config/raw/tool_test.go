@@ -31,3 +31,9 @@ func TestStackValidation(t *testing.T) {
 	stack := "network"
 	Equals(t, "network", raw.Project{Dir: &dir, Stack: &stack}.ToValid().Stack)
 }
+
+func TestRepoTerraformDistributionValidation(t *testing.T) {
+	tofu, bad := "opentofu", "pulumi"
+	Ok(t, raw.Repo{ID: "/.*/", TerraformDistribution: &tofu}.Validate())
+	ErrContains(t, "is not a valid terraform_distribution", raw.Repo{ID: "/.*/", TerraformDistribution: &bad}.Validate())
+}

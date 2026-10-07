@@ -138,6 +138,7 @@ type Repo struct {
 	SilencePRComments         []string       `yaml:"silence_pr_comments,omitempty" json:"silence_pr_comments,omitempty"`
 	Inputs                    *Inputs        `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	Tool                      *string        `yaml:"tool,omitempty" json:"tool,omitempty"`
+	TerraformDistribution     *string        `yaml:"terraform_distribution,omitempty" json:"terraform_distribution,omitempty"`
 }
 
 func (g GlobalCfg) Validate() error {
@@ -315,6 +316,7 @@ func (r Repo) Validate() error {
 		validation.Field(&r.RepoLocks, validation.By(repoLocksValid)),
 		validation.Field(&r.Inputs),
 		validation.Field(&r.Tool, validation.By(toolValid)),
+		validation.Field(&r.TerraformDistribution, validation.By(validDistribution)),
 	)
 }
 
@@ -430,6 +432,7 @@ OuterGlobalImportReqs:
 		SilencePRComments:         r.SilencePRComments,
 		Inputs:                    r.Inputs.ToValid(),
 		Tool:                      r.Tool,
+		TerraformDistribution:     r.TerraformDistribution,
 	}
 }
 

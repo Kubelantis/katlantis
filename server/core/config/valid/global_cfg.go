@@ -124,6 +124,9 @@ type Repo struct {
 	Inputs *Inputs
 	// Tool is the default IaC tool for matching repos.
 	Tool *string
+	// TerraformDistribution is the default engine (terraform or opentofu)
+	// for matching repos; a project's terraform_distribution wins.
+	TerraformDistribution *string
 }
 
 type MergedProjectCfg struct {
@@ -436,7 +439,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		Name:                      proj.GetName(),
 		AutoplanEnabled:           proj.Autoplan.Enabled,
 		AutoplanWhenModified:      proj.Autoplan.WhenModified,
-		TerraformDistribution:     proj.TerraformDistribution,
+		TerraformDistribution:     cmpPtr(proj.TerraformDistribution, g.repoDistribution(repoID)),
 		TerraformVersion:          proj.TerraformVersion,
 		RepoCfgVersion:            rCfg.Version,
 		PolicySets:                g.PolicySets,
@@ -469,7 +472,7 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 		Name:                      "",
 		AutoplanEnabled:           DefaultAutoPlanEnabled,
 		AutoplanWhenModified:      []string{},
-		TerraformDistribution:     nil,
+		TerraformDistribution:     g.repoDistribution(repoID),
 		TerraformVersion:          nil,
 		PolicySets:                g.PolicySets,
 		DeleteSourceBranchOnMerge: deleteSourceBranchOnMerge,
@@ -479,6 +482,28 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 		Env:                       inputs.Env,
 		Tool:                      tool,
 	}
+}
+
+// repoDistribution returns the terraform_distribution of the last server-side
+// repo entry that matches repoID and sets one, or nil for the server default.
+func (g GlobalCfg) repoDistribution(repoID string) *string {
+	var d *string
+	for _, repo := range g.Repos {
+		if repo.IDMatches(repoID) && repo.TerraformDistribution != nil {
+			d = repo.TerraformDistribution
+		}
+	}
+	return d
+}
+
+// cmpPtr returns the first non-nil pointer.
+func cmpPtr[T any](ptrs ...*T) *T {
+	for _, p := range ptrs {
+		if p != nil {
+			return p
+		}
+	}
+	return nil
 }
 
 // RepoTool returns the tool of the last server-side repo entry that

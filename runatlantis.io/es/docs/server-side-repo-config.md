@@ -272,6 +272,20 @@ repos:
 - Los valores de `env` pueden usar `${BASE_REPO_OWNER}`, `${BASE_REPO_NAME}`, `${REPO_REL_DIR}`, `${WORKSPACE}`, `${PROJECT_NAME}`, `${PULL_NUM}` y `${HEAD_COMMIT}`.
 - Las claves de `extra_args` son pasos incorporados: `init`, `plan`, `apply`, `show`, `policy_check`, `import`, `state_rm`.
 
+### OpenTofu {#opentofu}
+
+Configure `terraform_distribution: opentofu` para ejecutar [OpenTofu](https://opentofu.org) en lugar de Terraform en los repositorios que coincidan. El `terraform_distribution` de un proyecto en `atlantis.yaml` tiene prioridad, y el valor predeterminado del servidor es [`--default-tf-distribution`](server-configuration.md#default-tf-distribution).
+
+```yaml
+repos:
+  - id: /my-org/infra-.*/
+    terraform_distribution: opentofu
+```
+
+- Funciona con cualquier `tool`: los proyectos de Terragrunt y CDK Terrain ejecutan el binario de OpenTofu que Atlantis selecciona.
+- La versión viene de `terraform_version` o `required_version` (también se lee de archivos `.tofu`). Sin ninguno de los dos, un proyecto con la distribución que no es la predeterminada del servidor usa el binario de esa distribución en `PATH`, o su última versión cuando se permiten descargas. Atlantis nunca usa un número de versión de Terraform para OpenTofu, ni al revés.
+- Los cambios en archivos `.tofu` y `.tofu.json` disparan el autoplan.
+
 ### Terragrunt {#terragrunt}
 
 Establezca `tool: terragrunt` para ejecutar los pasos incorporados con [Terragrunt](https://terragrunt.gruntwork.io) en lugar de Terraform. Agregue `tool` a `allowed_overrides` para que los proyectos en `atlantis.yaml` puedan elegir.
@@ -315,6 +329,7 @@ atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml
 ```
 
 - Los pasos incorporados y sus argumentos, los valores fijos de env y los valores construidos con `echo "...$BASE_REPO_NAME..."` se convierten en inputs. Los comandos `terragrunt plan/apply` se convierten en `tool: terragrunt`.
+- Los comandos `tofu ...` se convierten en pasos incorporados con `terraform_distribution: opentofu`, igual que Terragrunt apuntado a `tofu` (`TG_TF_PATH` / `TERRAGRUNT_TFPATH`).
 - Los demás comandos personalizados se eliminan y se listan en el informe. Los comandos que deben ejecutarse en el clon de Atlantis del pull request (descifrar secretos, generar archivos de backend, Infracost sobre el plan) van en [pre workflow hooks](pre-workflow-hooks.md) o [post workflow hooks](post-workflow-hooks.md) del lado del servidor, que la herramienta conserva.
 - Las verificaciones de policy usan solo Conftest.
 
@@ -411,6 +426,7 @@ Esto se fusiona con cualquier configuración que escriba.
 | allowed_overrides             | []string                | none            | no       | Una lista de claves restringidas que los archivos `atlantis.yaml` pueden sobrescribir. Las claves soportadas son `plan_requirements`, `apply_requirements`, `import_requirements`, `delete_source_branch_on_merge`, `repo_locking`, `repo_locks`, `policy_check`, `silence_pr_comments`, `inputs` y `tool`                                                                                                                                          |
 | inputs                        | [Inputs](#native-inputs)| none            | no       | Entradas nativas para los pasos incorporados: `var_files`, `vars`, `backend_config`, `env`, `extra_args`.                                                                                                                                                                                                                                                                                                                                           |
 | tool                          | string                  | `terraform`     | no       | Ejecuta los pasos incorporados con `terraform`, [`terragrunt`](#terragrunt) o [`cdktn`](#cdk-terrain).                                                                                                                                                                                                                                                                                                                                              |
+| terraform_distribution        | string                  | `--default-tf-distribution`| no       | `terraform` u [`opentofu`](#opentofu). El `terraform_distribution` de un proyecto en `atlantis.yaml` tiene prioridad.                                                                                                                                                                                                                                                                                                                               |
 | delete_source_branch_on_merge | bool                    | false           | no       | Si se elimina o no la rama de origen al hacer merge.                                                                                                                                                                                                                                                                                                                                    |
 | repo_locking                  | bool                    | false           | no       | (obsoleto) Si se obtiene o no un lock.                                                                                                                                                                                                                                                                                                                                                  |
 | repo_locks                    | [RepoLocks](#repolocks) | `mode: on_plan` | no       | Si los locks del repositorio están habilitados o no para este proyecto en plan o apply. Vea [RepoLocks](#repolocks) para más detalles.                                                                                                                                                                                                                                                  |

@@ -238,6 +238,20 @@ repos:
 - `env` values may use `${BASE_REPO_OWNER}`, `${BASE_REPO_NAME}`, `${REPO_REL_DIR}`, `${WORKSPACE}`, `${PROJECT_NAME}`, `${PULL_NUM}` and `${HEAD_COMMIT}`.
 - `extra_args` keys are built-in steps: `init`, `plan`, `apply`, `show`, `policy_check`, `import`, `state_rm`.
 
+### OpenTofu
+
+Set `terraform_distribution: opentofu` to run [OpenTofu](https://opentofu.org) instead of Terraform for matching repos. A project's own `terraform_distribution` in `atlantis.yaml` takes precedence, and the server-wide default is [`--default-tf-distribution`](server-configuration.md#default-tf-distribution).
+
+```yaml
+repos:
+  - id: /my-org/infra-.*/
+    terraform_distribution: opentofu
+```
+
+- It works with every `tool`: Terragrunt and CDK Terrain projects run the OpenTofu binary Atlantis selects.
+- The version comes from `terraform_version` or `required_version` (read from `.tofu` files too). Without either, a project on the distribution that is not the server default uses that distribution's binary on `PATH`, or its latest release when downloads are allowed. Atlantis never uses a Terraform version number for OpenTofu, or the other way round.
+- Changes to `.tofu` and `.tofu.json` files trigger autoplan.
+
 ### Terragrunt
 
 Set `tool: terragrunt` to run the built-in steps with [Terragrunt](https://terragrunt.gruntwork.io) instead of Terraform. List `tool` in `allowed_overrides` to let projects in `atlantis.yaml` choose.
@@ -326,6 +340,7 @@ atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml
 - Built-in steps and their arguments, fixed env values, and env values built from `echo "...$BASE_REPO_NAME..."` become inputs.
 - `rm -rf .terraform`, `terraform workspace select $WORKSPACE` and `echo` placeholders are dropped: native workflows already cover them.
 - `run: terraform plan ...` style commands become the built-in step with extra arguments.
+- `tofu ...` commands become built-in steps with `terraform_distribution: opentofu`, and so does Terragrunt pointed at `tofu` (`TG_TF_PATH` / `TERRAGRUNT_TFPATH`).
 - Other custom commands, `multienv` and `custom_policy_check` are removed and listed in the report. Commands that must run in Atlantis's clone of the pull request, such as decrypting secrets, rendering backend files or running Infracost on the plan, belong in server-side [pre-workflow](pre-workflow-hooks.md) or [post-workflow](post-workflow-hooks.md) hooks, which the tool keeps. With a TypeSafe API key (`ATLANTIS_TYPESAFE_API_KEY`), Jev labels each removed command (wrapper tool, policy scanner, cost estimation, credentials, ...) so the report says what replaces it. Labels below 0.8 confidence are marked uncertain. Labels never change the converted files.
 - A server-side workflow named `default` becomes a first catch-all repo entry with inputs.
 - `--write` keeps the originals as `.orig`; `--strict` exits non-zero if anything was removed or needs review.
@@ -497,6 +512,7 @@ repos:
 | post_workflow_hooks | [][WorkflowHook](post-workflow-hooks.md#reference) | none | no | Scripts run in Atlantis's clone after a command. See [Post Workflow Hooks](post-workflow-hooks.md). |
 | inputs | [Inputs](#native-inputs) | none | no | Native inputs for the built-in steps: `var_files`, `vars`, `backend_config`, `env`, `extra_args`. |
 | tool | string | `terraform` | no | Runs the built-in steps with `terraform`, [`terragrunt`](#terragrunt) or [`cdktn`](#cdk-terrain). |
+| terraform_distribution | string | `--default-tf-distribution` | no | `terraform` or [`opentofu`](#opentofu). A project's `terraform_distribution` in `atlantis.yaml` takes precedence. |
 | plan_requirements | []string | none | no | Requirements that must be satisfied before `atlantis plan` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | apply_requirements | []string | none | no | Requirements that must be satisfied before `atlantis apply` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |
 | import_requirements | []string | none | no | Requirements that must be satisfied before `atlantis import` can be run. Currently the only supported requirements are `approved`, `mergeable`, and `undiverged`. See [Command Requirements](command-requirements.md) for more details. |

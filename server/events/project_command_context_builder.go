@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hashicorp/go-version"
 	"github.com/runatlantis/atlantis/server/core/config/valid"
 	"github.com/runatlantis/atlantis/server/core/terraform"
 	"github.com/runatlantis/atlantis/server/core/terraform/tfclient"
 	"github.com/runatlantis/atlantis/server/events/command"
 	"github.com/runatlantis/atlantis/server/events/models"
+	"github.com/runatlantis/atlantis/server/logging"
 	tally "github.com/uber-go/tally/v4"
 )
 
@@ -238,6 +240,20 @@ func detectProjectTerraformVersion(ctx *command.Context, prjCfg *valid.MergedPro
 		tfDistribution = terraform.NewDistribution(*prjCfg.TerraformDistribution)
 	}
 	prjCfg.TerraformVersion = terraformClient.DetectVersion(ctx.Log, tfDistribution, filepath.Join(repoDir, prjCfg.RepoRelDir))
+	// Without a detected version the server's default version applies, which
+	// is a version of the server's default distribution. A project on the
+	// other distribution needs that distribution's own default instead.
+	if prjCfg.TerraformVersion == nil && tfDistribution != nil {
+		if d, ok := terraformClient.(distributionDefaulter); ok {
+			prjCfg.TerraformVersion = d.DefaultVersionFor(ctx.Log, tfDistribution)
+		}
+	}
+}
+
+// distributionDefaulter is implemented by Terraform clients that know a
+// default version for each distribution.
+type distributionDefaulter interface {
+	DefaultVersionFor(log logging.SimpleLogging, d terraform.Distribution) *version.Version
 }
 
 // newProjectCommandContext is a initializer method that handles constructing the
