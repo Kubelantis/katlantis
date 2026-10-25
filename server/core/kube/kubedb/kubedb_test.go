@@ -100,7 +100,7 @@ func TestPlanHolderIsTheReplicaThatPlanned(t *testing.T) {
 	policy.Command = command.PolicyCheck
 	_, err = b.UpdatePullWithResults(pull, []command.ProjectResult{policy})
 	Ok(t, err)
-	Ok(t, b.UpdateProjectStatus(pull, "default", ".", models.AppliedPlanStatus))
+	Ok(t, b.UpdateProjectStatus(pull, "default", ".", "", models.AppliedPlanStatus))
 	holder, err = b.PlanHolder(repo, 3)
 	Ok(t, err)
 	Equals(t, "atlantis-0", holder)

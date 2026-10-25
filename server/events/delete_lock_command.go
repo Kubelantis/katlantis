@@ -4,6 +4,7 @@
 package events
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/runatlantis/atlantis/server/core/db"
@@ -70,6 +71,9 @@ func (l *DefaultDeleteLockCommand) DeleteLocksByPull(logger logging.SimpleLoggin
 		return numLocks, err
 	}
 
+	// Every lock is already released, so keep going past a failure: stopping
+	// would leave the remaining plans applicable.
+	var errs []error
 	for i := range numLocks {
 		lock := locks[i]
 
@@ -78,16 +82,22 @@ func (l *DefaultDeleteLockCommand) DeleteLocksByPull(logger logging.SimpleLoggin
 		// disk, where DeletePlan cannot reach it; the discarded status is
 		// what stops a later apply from using it.
 		if l.Database != nil && lock.Pull.BaseRepo != (models.Repo{}) {
-			if err := l.Database.UpdateProjectStatus(lock.Pull, lock.Workspace, lock.Project.Path, models.DiscardedPlanStatus); err != nil {
+			err := l.Database.UpdateProjectStatus(lock.Pull, lock.Workspace, lock.Project.Path, lock.Project.ProjectName, models.DiscardedPlanStatus)
+			switch {
+			case errors.Is(err, db.ErrProjectNotFound):
+				// Apply needs a recorded plan status, so there is nothing
+				// another replica could apply.
+				logger.Debug("no plan status to discard for dir %q workspace %q project %q", lock.Project.Path, lock.Workspace, lock.Project.ProjectName)
+			case err != nil:
 				logger.Warn("Failed to mark plan as discarded: %s", err)
-				return numLocks, err
+				errs = append(errs, err)
 			}
 		}
 
 		err := l.WorkingDir.DeletePlan(logger, lock.Pull.BaseRepo, lock.Pull, lock.Workspace, lock.Project.Path, lock.Project.ProjectName)
 		if err != nil {
 			logger.Warn("Failed to delete plan: %s", err)
-			return numLocks, err
+			errs = append(errs, err)
 		}
 	}
 
@@ -107,5 +117,5 @@ func (l *DefaultDeleteLockCommand) DeleteLocksByPull(logger logging.SimpleLoggin
 		logger.Debug("No locks found for repo '%v', pull request: %v", repoFullName, pullNum)
 	}
 
-	return numLocks, nil
+	return numLocks, errors.Join(errs...)
 }

@@ -6,6 +6,7 @@
 package db
 
 import (
+	"errors"
 	"time"
 
 	"github.com/runatlantis/atlantis/server/events/command"
@@ -13,6 +14,10 @@ import (
 )
 
 //go:generate go tool mockgen -package mocks -destination mocks/mock_database.go . Database
+
+// ErrProjectNotFound is returned by UpdateProjectStatus when the pull has no
+// status for the project.
+var ErrProjectNotFound = errors.New("no status recorded for this project")
 
 // Database is an implementation of the database API we require.
 type Database interface {
@@ -22,7 +27,10 @@ type Database interface {
 	List() ([]models.ProjectLock, error)
 	GetLock(project models.Project, workspace string) (*models.ProjectLock, error)
 	UnlockByPull(repoFullName string, pullNum int) ([]models.ProjectLock, error)
-	UpdateProjectStatus(pull models.PullRequest, workspace string, repoRelDir string, newStatus models.ProjectPlanStatus) error
+	// UpdateProjectStatus sets the status of the project with this workspace,
+	// directory and name. It returns ErrProjectNotFound when the pull has no
+	// such project.
+	UpdateProjectStatus(pull models.PullRequest, workspace string, repoRelDir string, projectName string, newStatus models.ProjectPlanStatus) error
 	GetPullStatus(pull models.PullRequest) (*models.PullStatus, error)
 	DeletePullStatus(pull models.PullRequest) error
 	UpdatePullWithResults(pull models.PullRequest, newResults []command.ProjectResult) (models.PullStatus, error)

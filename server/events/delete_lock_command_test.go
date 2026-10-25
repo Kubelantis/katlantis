@@ -244,3 +244,50 @@ func TestDeleteLocksByPull_MarksPlansDiscarded(t *testing.T) {
 	Ok(t, err)
 	Equals(t, models.DiscardedPlanStatus, status.Projects[0].Status)
 }
+
+// Two named projects can share a directory and workspace. Unlocking one must
+// discard that project's plan, not the first one in the directory.
+func TestDeleteLocksByPull_DiscardsTheNamedProject(t *testing.T) {
+	logger := logging.NewNoopLogger(t)
+	RegisterMockTestingT(t)
+	ctrl := gomock.NewController(t)
+	l := lockmocks.NewMockLocker(ctrl)
+	workingDir := events.NewMockWorkingDir()
+	db := kubedbtest.New(t)
+	t.Cleanup(func() { db.Close() })
+
+	pull := models.PullRequest{
+		BaseRepo:   models.Repo{FullName: "owner/repo", Owner: "owner", Name: "repo", VCSHost: models.VCSHost{Hostname: "github.com"}},
+		Num:        2,
+		HeadCommit: "abc",
+	}
+	plan := func(name string) command.ProjectResult {
+		return command.ProjectResult{
+			Command:              command.Plan,
+			RepoRelDir:           "dir1",
+			Workspace:            "default",
+			ProjectName:          name,
+			ProjectCommandOutput: command.ProjectCommandOutput{PlanSuccess: &models.PlanSuccess{TerraformOutput: "Plan: 1 to add"}},
+		}
+	}
+	_, err := db.UpdatePullWithResults(pull, []command.ProjectResult{plan("a"), plan("b")})
+	Ok(t, err)
+
+	l.EXPECT().UnlockByPull("owner/repo", 2).Return([]models.ProjectLock{
+		{Pull: pull, Workspace: "default", Project: models.Project{Path: "dir1", RepoFullName: "owner/repo", ProjectName: "b"}},
+		// No status was recorded for this one: it is skipped, not an error.
+		{Pull: pull, Workspace: "default", Project: models.Project{Path: "dir2", RepoFullName: "owner/repo"}},
+	}, nil)
+	dlc := events.DefaultDeleteLockCommand{Locker: l, WorkingDir: workingDir, Database: db}
+
+	n, err := dlc.DeleteLocksByPull(logger, "owner/repo", 2)
+	Ok(t, err)
+	Equals(t, 2, n)
+	status, err := db.GetPullStatus(pull)
+	Ok(t, err)
+	got := map[string]models.ProjectPlanStatus{}
+	for _, p := range status.Projects {
+		got[p.ProjectName] = p.Status
+	}
+	Equals(t, map[string]models.ProjectPlanStatus{"a": models.PlannedPlanStatus, "b": models.DiscardedPlanStatus}, got)
+}

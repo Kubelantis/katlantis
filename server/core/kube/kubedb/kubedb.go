@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -509,23 +510,35 @@ func (k *KubeDB) DeletePullStatus(pull models.PullRequest) error {
 }
 
 // UpdateProjectStatus implements db.Database.
-func (k *KubeDB) UpdateProjectStatus(pull models.PullRequest, workspace string, repoRelDir string, newStatus models.ProjectPlanStatus) error {
+func (k *KubeDB) UpdateProjectStatus(pull models.PullRequest, workspace string, repoRelDir string, projectName string, newStatus models.ProjectPlanStatus) error {
 	ctx, cancel := k.ctx()
 	defer cancel()
+	cleanDir := filepath.Clean(repoRelDir)
 	err := retry.RetryOnConflict(conflictBackoff, func() error {
 		obj, err := k.getPull(ctx, pull)
-		if err != nil || obj == nil {
+		if err != nil {
 			return err
+		}
+		if obj == nil {
+			return db.ErrProjectNotFound
 		}
 		curr, err := specToPullStatus(obj.Spec)
 		if err != nil {
 			return err
 		}
+		// Several named projects can share a directory and workspace, so the
+		// name is part of the match: marking the wrong one discarded would
+		// leave the right one applicable.
+		found := false
 		for i := range curr.Projects {
-			if curr.Projects[i].Workspace == workspace && curr.Projects[i].RepoRelDir == repoRelDir {
-				curr.Projects[i].Status = newStatus
-				break
+			p := &curr.Projects[i]
+			if p.Workspace == workspace && filepath.Clean(p.RepoRelDir) == cleanDir && p.ProjectName == projectName {
+				p.Status = newStatus
+				found = true
 			}
+		}
+		if !found {
+			return db.ErrProjectNotFound
 		}
 		return k.writePull(ctx, obj, pull, curr, "")
 	})
