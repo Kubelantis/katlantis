@@ -146,9 +146,52 @@ func TestLosingLeaseToAnotherReplicaFencesAndNotifies(t *testing.T) {
 	}
 	Assert(t, a.LostPullLock("org/repo", 1), "lost lease must fail the fencing check")
 
-	// A cannot re-enter a lost lease while B holds it.
+	// A cannot start a new command on the pull while the command that lost
+	// the lease is still running, and that command stays fenced.
 	_, err = a.TryLock("org/repo", 1, "default", "other", "", command.Plan, events.WorkingDirLockMetadata{})
+	ErrContains(t, "lost the lock for pull request 1", err)
+	Assert(t, a.LostPullLock("org/repo", 1), "the running command must stay fenced after a new command tried to start")
+}
+
+func TestUnlockByPullKeepsLeaseWhileCommandsRun(t *testing.T) {
+	r := replicas(t, 2)
+	running, err := r[0].TryLock("org/repo", 1, "default", "a", "", command.Apply, events.WorkingDirLockMetadata{})
+	Ok(t, err)
+
+	// `atlantis cancel` clears local locks; the running apply keeps going, so
+	// another replica must not get the pull.
+	r[0].UnlockByPull("org/repo", 1)
+	_, err = r[1].TryLockPull("org/repo", 1, command.Plan, events.WorkingDirLockMetadata{})
 	ErrContains(t, "another Atlantis replica", err)
+	Assert(t, r[0].Holds("org/repo", 1), "replica running the apply must still hold the lease")
+
+	running()
+	unlock, err := r[1].TryLockPull("org/repo", 1, command.Plan, events.WorkingDirLockMetadata{})
+	Ok(t, err)
+	unlock()
+}
+
+func TestReleaseThenReacquireKeepsLease(t *testing.T) {
+	r := replicas(t, 2)
+	for i := range 20 {
+		first, err := r[0].TryLockPull("org/repo", 1, command.Plan, events.WorkingDirLockMetadata{})
+		Ok(t, err)
+		done := make(chan func())
+		go func() {
+			second, err := r[0].TryLockPull("org/repo", 1, command.Plan, events.WorkingDirLockMetadata{})
+			if err != nil {
+				t.Errorf("iteration %d: reacquire: %s", i, err)
+				second = func() {}
+			}
+			done <- second
+		}()
+		first()
+		second := <-done
+		// The second acquisition holds the pull; the other replica must not.
+		_, err = r[1].TryLockPull("org/repo", 1, command.Plan, events.WorkingDirLockMetadata{})
+		Assert(t, err != nil, "iteration %d: lease was deleted under a live acquisition", i)
+		second()
+	}
 }
 
 func TestUnrenewedLeaseStopsBeingTrusted(t *testing.T) {

@@ -71,6 +71,10 @@ type Locker struct {
 	cfg  Config
 	mu   sync.Mutex
 	held map[string]*held
+	// releasing has an entry, closed when done, for each pull whose lease is
+	// being deleted. acquire waits for it so the delete cannot remove a lease
+	// that was just taken again.
+	releasing map[string]chan struct{}
 }
 
 // New returns a Locker.
@@ -84,7 +88,7 @@ func New(cfg Config) *Locker {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Locker{cfg: cfg, held: map[string]*held{}}
+	return &Locker{cfg: cfg, held: map[string]*held{}, releasing: map[string]chan struct{}{}}
 }
 
 // trustWindow is how long a lease is trusted after its last renewal.
@@ -131,6 +135,15 @@ func pullKey(repoFullName string, pullNum int) string {
 func (l *Locker) acquire(repoFullName string, pullNum int, cmdName command.Name) (func(), error) {
 	key := pullKey(repoFullName, pullNum)
 	l.mu.Lock()
+	for {
+		ch, ok := l.releasing[key]
+		if !ok {
+			break
+		}
+		l.mu.Unlock()
+		<-ch
+		l.mu.Lock()
+	}
 	defer l.mu.Unlock()
 
 	if h, ok := l.held[key]; ok {
@@ -138,10 +151,11 @@ func (l *Locker) acquire(repoFullName string, pullNum int, cmdName command.Name)
 			h.refs++
 			return l.releaseFunc(key, h), nil
 		}
-		// The lease was lost while other commands still referenced it. Those
-		// commands keep failing their fencing checks; this one starts over.
-		delete(l.held, key)
-		h.cancel()
+		// The lease was lost while commands still reference it. The entry
+		// stays until they release it, so their fencing checks keep failing;
+		// replacing it here would make LostPullLock report false for them.
+		return func() {}, fmt.Errorf("cannot run %q: this Atlantis replica lost the lock for pull request %d while a previous command was still running.\n"+
+			"Wait until that command stops and try again", cmdName, pullNum)
 	}
 
 	lease := &cluster.TimedLease{
@@ -214,25 +228,32 @@ func (l *Locker) renew(ctx context.Context, h *held) {
 // that arrives after UnlockByPull cannot drop a later acquisition's reference.
 func (l *Locker) releaseFunc(key string, owner *held) func() {
 	var once sync.Once
-	return func() { once.Do(func() { l.release(key, owner, false) }) }
+	return func() { once.Do(func() { l.release(key, owner) }) }
 }
 
-// release drops a reference to owner (any holder when owner is nil) and
-// deletes the lease when none remain or all is set.
-func (l *Locker) release(key string, owner *held, all bool) {
+// release drops a reference to owner and deletes the lease when none remain.
+func (l *Locker) release(key string, owner *held) {
 	l.mu.Lock()
 	h, ok := l.held[key]
-	if !ok || (owner != nil && h != owner) {
+	if !ok || h != owner {
 		l.mu.Unlock()
 		return
 	}
 	h.refs--
-	if h.refs > 0 && !all {
+	if h.refs > 0 {
 		l.mu.Unlock()
 		return
 	}
 	delete(l.held, key)
+	done := make(chan struct{})
+	l.releasing[key] = done
 	l.mu.Unlock()
+	defer func() {
+		l.mu.Lock()
+		delete(l.releasing, key)
+		l.mu.Unlock()
+		close(done)
+	}()
 
 	h.cancel()
 	<-h.done
@@ -277,8 +298,10 @@ func (l *Locker) HasCommandLock(repoFullName string, pullNum int, cmdName comman
 	return l.cfg.Local.HasCommandLock(repoFullName, pullNum, cmdName)
 }
 
-// UnlockByPull implements events.WorkingDirLocker.
+// UnlockByPull implements events.WorkingDirLocker. It clears the local locks
+// but keeps the lease: commands still running here hold references to it and
+// release it when they finish. Dropping it now would let another replica start
+// on the pull while they run.
 func (l *Locker) UnlockByPull(repoFullName string, pullNum int) {
 	l.cfg.Local.UnlockByPull(repoFullName, pullNum)
-	l.release(pullKey(repoFullName, pullNum), nil, true)
 }
