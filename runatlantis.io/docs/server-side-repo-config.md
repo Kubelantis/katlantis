@@ -273,7 +273,7 @@ repos:
 
 When the server-side `tool` of a repo is `terragrunt` and [autodiscovery](repo-level-atlantis-yaml.md#autodiscovery-config) is on (the default when `atlantis.yaml` lists no projects), Atlantis runs `terragrunt find` on each pull request and makes every unit a project. No `atlantis.yaml` or terragrunt-atlantis-config is needed.
 
-`terragrunt find` evaluates the pull request's configuration, including `run_cmd`. When the server-side `plan_requirements` include `approved`, Atlantis does not run it until the pull request is approved, so autoplan on an unapproved pull request reports that approval is needed. The same applies to CDK Terrain stack discovery.
+`terragrunt find` evaluates the pull request's configuration, including `run_cmd`. When the server-side `plan_requirements` include `approved`, Atlantis does not run it until the pull request is approved, so autoplan on an unapproved pull request reports that approval is needed. Every command that discovers projects checks the approval again when it runs, so dismissing the approval stops discovery, and if Atlantis cannot fetch the pull request's approval from the VCS host the command fails and can be retried. The same applies to CDK Terrain stack discovery.
 
 - A `terragrunt.hcl` that other units include (a parent config) is not a project.
 - A unit autoplans when a file changes in its directory, in a file it reads (included configs, `read_terragrunt_config`, its `terraform.source` module), or in any of those for a unit it depends on through `dependency` or `dependencies` blocks, directly or not.

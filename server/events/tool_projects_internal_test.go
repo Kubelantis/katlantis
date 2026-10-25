@@ -4,6 +4,7 @@
 package events
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 
@@ -70,23 +71,79 @@ func TestWithToolProjects_ApprovedPullDiscovers(t *testing.T) {
 	Equals(t, 1, d.calls)
 }
 
-func TestWithToolProjects_UnfetchedStatusUsesPlannedHead(t *testing.T) {
+type fakeStatusFetcher struct {
+	status models.PullReqStatus
+	err    error
+	calls  int
+}
+
+func (f *fakeStatusFetcher) FetchPullStatus(logging.SimpleLogging, models.PullRequest) (models.PullReqStatus, error) {
+	f.calls++
+	return f.status, f.err
+}
+
+// Stored plan results do not stand in for an approval: the approval may have
+// been dismissed since, and results are also stored for plans that failed.
+func TestWithToolProjects_StoredResultsAtHeadDoNotCountAsApproval(t *testing.T) {
 	p, d := toolBuilder([]string{"approved"})
 	ctx := toolCtx(t)
-
-	// Never planned: blocked.
+	ctx.PullStatus = &models.PullStatus{
+		Pull:     models.PullRequest{HeadCommit: "abc"},
+		Projects: []models.ProjectStatus{{RepoRelDir: "unit", Status: models.ErroredPlanStatus}},
+	}
 	_, err := p.withToolProjects(ctx, t.TempDir(), valid.RepoCfg{})
 	ErrContains(t, "needs the pull request to be approved", err)
-
-	// Planned at an older head: still blocked.
-	ctx.PullStatus = &models.PullStatus{Pull: models.PullRequest{HeadCommit: "old"}, Projects: []models.ProjectStatus{{RepoRelDir: "unit"}}}
-	_, err = p.withToolProjects(ctx, t.TempDir(), valid.RepoCfg{})
-	ErrContains(t, "needs the pull request to be approved", err)
 	Equals(t, 0, d.calls)
+}
 
-	// Planned at this head: the plan already passed the requirement.
-	ctx.PullStatus.Pull.HeadCommit = "abc"
-	_, err = p.withToolProjects(ctx, t.TempDir(), valid.RepoCfg{})
+// Commands that do not fetch the pull request status themselves, such as
+// version, state rm and approve_policies, get it fetched before discovery.
+func TestWithToolProjects_FetchesApprovalWhenNotFetched(t *testing.T) {
+	approved := models.PullReqStatus{ApprovalStatus: models.ApprovalStatus{IsApproved: true}}
+	cases := map[string]struct {
+		fetcher  *fakeStatusFetcher
+		wantErr  string
+		discover int
+	}{
+		"approved":     {fetcher: &fakeStatusFetcher{status: approved}, discover: 1},
+		"not approved": {fetcher: &fakeStatusFetcher{}, wantErr: "needs the pull request to be approved"},
+		"fetch fails":  {fetcher: &fakeStatusFetcher{err: errors.New("vcs down")}, wantErr: "vcs down"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, d := toolBuilder([]string{"approved"})
+			p.PullReqStatusFetcher = c.fetcher
+			_, err := p.withToolProjects(toolCtx(t), t.TempDir(), valid.RepoCfg{})
+			if c.wantErr != "" {
+				ErrContains(t, c.wantErr, err)
+			} else {
+				Ok(t, err)
+			}
+			Equals(t, 1, c.fetcher.calls)
+			Equals(t, c.discover, d.calls)
+		})
+	}
+}
+
+func TestWithToolProjects_DoesNotRefetchApproval(t *testing.T) {
+	p, d := toolBuilder([]string{"approved"})
+	f := &fakeStatusFetcher{}
+	p.PullReqStatusFetcher = f
+	ctx := toolCtx(t)
+	ctx.PullRequestStatusFetched = true
+	ctx.PullRequestStatus.ApprovalStatus.IsApproved = true
+	_, err := p.withToolProjects(ctx, t.TempDir(), valid.RepoCfg{})
 	Ok(t, err)
+	Equals(t, 0, f.calls)
+	Equals(t, 1, d.calls)
+}
+
+func TestWithToolProjects_NoApprovalRequirementDoesNotFetch(t *testing.T) {
+	p, d := toolBuilder(nil)
+	f := &fakeStatusFetcher{}
+	p.PullReqStatusFetcher = f
+	_, err := p.withToolProjects(toolCtx(t), t.TempDir(), valid.RepoCfg{})
+	Ok(t, err)
+	Equals(t, 0, f.calls)
 	Equals(t, 1, d.calls)
 }

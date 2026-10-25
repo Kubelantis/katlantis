@@ -99,6 +99,7 @@ func NewInstrumentedProjectCommandBuilder(
 	terraformClient tfclient.Client,
 	planStore runtime.PlanStore,
 	localSharePlanDir string,
+	pullReqStatusFetcher vcs.PullReqStatusFetcher,
 ) *InstrumentedProjectCommandBuilder {
 	scope = scope.SubScope("builder")
 
@@ -133,6 +134,7 @@ func NewInstrumentedProjectCommandBuilder(
 		planStore,
 	)
 	builder.LocalSharePlanDir = localSharePlanDir
+	builder.PullReqStatusFetcher = pullReqStatusFetcher
 
 	return &InstrumentedProjectCommandBuilder{
 		ProjectCommandBuilder: builder,
@@ -321,6 +323,10 @@ type DefaultProjectCommandBuilder struct {
 	TerraformExecutor tfclient.Client
 	// Root directory for local Terraform plan files.
 	LocalSharePlanDir string
+	// Fetches the pull request's approval before tool discovery when the
+	// command has not fetched it already. Nil means discovery is refused
+	// whenever approval is required and was not fetched.
+	PullReqStatusFetcher vcs.PullReqStatusFetcher
 }
 
 func (p *DefaultProjectCommandBuilder) withLocalSharePlanDir(projCtxs []command.ProjectContext) []command.ProjectContext {
@@ -572,11 +578,18 @@ func (p *DefaultProjectCommandBuilder) toolDiscoveryAllowed(ctx *command.Context
 	if ctx.API && ctx.Pull.Num <= 0 && ctx.SkipPRRequirements {
 		return nil
 	}
-	if ctx.PullRequestStatusFetched {
-		if ctx.PullRequestStatus.ApprovalStatus.IsApproved {
-			return nil
+	// Only an approval observed for this command counts. Stored plan results
+	// do not: the approval may have been dismissed since, and results are
+	// also stored for plans that failed the requirement.
+	if !ctx.PullRequestStatusFetched && p.PullReqStatusFetcher != nil {
+		status, err := p.PullReqStatusFetcher.FetchPullStatus(ctx.Log, ctx.Pull)
+		if err != nil {
+			return fmt.Errorf("checking that the pull request is approved before discovering %s projects: %w", tool, err)
 		}
-	} else if ctx.PullStatus != nil && ctx.PullStatus.Pull.HeadCommit == ctx.Pull.HeadCommit && len(ctx.PullStatus.Projects) > 0 {
+		ctx.PullRequestStatus = status
+		ctx.PullRequestStatusFetched = true
+	}
+	if ctx.PullRequestStatusFetched && ctx.PullRequestStatus.ApprovalStatus.IsApproved {
 		return nil
 	}
 	return fmt.Errorf("discovering %s projects runs code from the pull request, so it needs the pull request to be approved first (plan_requirements: [%s])", tool, raw.ApprovedRequirement)
