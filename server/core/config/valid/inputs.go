@@ -90,8 +90,11 @@ func (i Inputs) args(stepName string) []string {
 // repoDeniedEnv are environment variables repo-side inputs may not set. They
 // change which binaries or plugins run, how the CLI is configured, or carry
 // Atlantis's own settings, so setting them would let a pull request undo
-// controls the operator put on the server.
-var repoDeniedEnv = []string{"PATH", "BASH_ENV", "ENV", "TF_CLI_CONFIG_FILE", "TERRAFORM_CONFIG", "TF_PLUGIN_CACHE_DIR", "TG_TF_PATH", "TERRAGRUNT_TFPATH", "NODE_OPTIONS"}
+// controls the operator put on the server. HOME, TF_DATA_DIR and the XDG data
+// directories are here because Terraform reads $HOME/.terraformrc and looks
+// for providers in them, which would undo the TF_CLI_CONFIG_FILE and
+// -plugin-dir limits.
+var repoDeniedEnv = []string{"PATH", "BASH_ENV", "ENV", "HOME", "TF_CLI_CONFIG_FILE", "TERRAFORM_CONFIG", "TF_PLUGIN_CACHE_DIR", "TF_DATA_DIR", "XDG_DATA_HOME", "XDG_DATA_DIRS", "TG_TF_PATH", "TERRAGRUNT_TFPATH", "NODE_OPTIONS"}
 
 // repoDeniedEnvPrefixes are prefixes of environment variables repo-side
 // inputs may not set; see repoDeniedEnv.
