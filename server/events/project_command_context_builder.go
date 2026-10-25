@@ -284,30 +284,15 @@ func newProjectCommandContext(ctx *command.Context,
 	var projectPolicyStatus []models.PolicySetStatus
 	var projectPlanRisk *models.PlanRisk
 
+	// Plan status, policy status and plan risk all gate apply, so they must
+	// come from this exact project: matching on the directory or the name
+	// alone would let another workspace's result stand in for this one.
+	// This is the same match the apply plan validator uses.
 	if ctx.PullStatus != nil {
-		for _, project := range ctx.PullStatus.Projects {
-
-			// if name is not used, let's match the directory
-			if projCfg.Name == "" && project.RepoRelDir == projCfg.RepoRelDir {
-				projectPlanStatus = project.Status
-				projectPolicyStatus = project.PolicyStatus
-				break
-			}
-
-			if projCfg.Name != "" && project.ProjectName == projCfg.Name {
-				projectPlanStatus = project.Status
-				projectPolicyStatus = project.PolicyStatus
-				break
-			}
-		}
-		// The plan risk gates apply, so it must come from this exact project:
-		// matching on the directory alone would let another workspace's
-		// assessment stand in for this one.
-		for _, project := range ctx.PullStatus.Projects {
-			if project.RepoRelDir == projCfg.RepoRelDir && project.Workspace == projCfg.Workspace && project.ProjectName == projCfg.Name {
-				projectPlanRisk = project.PlanRisk
-				break
-			}
+		if project := findProjectInPullStatus(ctx.PullStatus, projCfg.Workspace, projCfg.RepoRelDir, projCfg.Name); project != nil {
+			projectPlanStatus = project.Status
+			projectPolicyStatus = project.PolicyStatus
+			projectPlanRisk = project.PlanRisk
 		}
 	}
 
