@@ -415,7 +415,7 @@ Project inputs combine with the server-side ones:
 
 Repo config is written by pull request authors, so its inputs are limited:
 
-- Environment variable references such as `$NAME` in repo-side `vars`, `var_files`, `backend_config` and `extra_args` are passed to Terraform as written, never expanded from the Atlantis server's environment. Server-side inputs are still expanded.
+- Repo-side `vars`, `var_files`, `backend_config` and `extra_args` can reference only the Atlantis context variables: `$WORKSPACE`, `$DIR`, `$ATLANTIS_TERRAFORM_VERSION`, `$BASE_REPO_OWNER`, `$BASE_REPO_NAME`, `$REPO_REL_DIR`, `$PROJECT_NAME`, `$PULL_NUM` and `$HEAD_COMMIT` (also written `${NAME}`). Any other reference, such as `$AWS_REGION`, is passed to Terraform as written, never expanded from the Atlantis server's environment. Server-side inputs can reference any environment variable.
 - Repo-side `env` cannot set variables that change which programs or plugins run, or Atlantis's own settings: `PATH`, `BASH_ENV`, `ENV`, `HOME`, `NODE_OPTIONS`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_PLUGIN_CACHE_DIR`, `TF_DATA_DIR`, `XDG_DATA_HOME`, `XDG_DATA_DIRS`, `TG_TF_PATH`, `TERRAGRUNT_TFPATH`, or names starting with `LD_`, `DYLD_`, `GIT_`, `ATLANTIS_` or `TF_CLI_ARGS`.
 - Repo-side `extra_args` cannot set the `policy_check` key, even to an empty list, and `extra_args.init` cannot pass `-plugin-dir`.
 

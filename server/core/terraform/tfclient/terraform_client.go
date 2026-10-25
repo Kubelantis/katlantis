@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -427,7 +428,7 @@ func (c *DefaultClient) prepExecCmd(ctx command.ProjectContext, d terraform.Dist
 	if err != nil {
 		return "", nil, err
 	}
-	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, literalArgs(ctx), ctx.Tool)
+	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, argSourcesOf(ctx), ctx.Tool)
 	if err != nil {
 		return "", nil, err
 	}
@@ -440,10 +441,11 @@ func (c *DefaultClient) prepExecCmd(ctx command.ProjectContext, d terraform.Dist
 // prepCmd prepares the argument vector and the set of environment variables for
 // running terraform. The vector is executed directly, without a shell, so that
 // a metacharacter in an argument is never interpreted. Arguments still undergo
-// environment variable expansion, because extra_args is documented to be able
-// to refer to $WORKSPACE and friends, but that expansion is performed here
-// rather than by a shell, so it neither word splits nor globs.
-func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribution, v *version.Version, workspace string, path string, args []string, customEnvVars map[string]string, expandable []string, literal []string, tool string) ([]string, string, []string, error) {
+// variable expansion, because extra_args is documented to be able to refer to
+// $WORKSPACE and friends, but that expansion is performed here rather than by
+// a shell, so it neither word splits nor globs. src says how far each argument
+// may be expanded.
+func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribution, v *version.Version, workspace string, path string, args []string, customEnvVars map[string]string, src argSources, tool string) ([]string, string, []string, error) {
 
 	if v == nil {
 		v = c.defaultVersion
@@ -500,13 +502,22 @@ func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribut
 	argv := make([]string, 0, len(command)+len(args))
 	argv = append(argv, command...)
 	expand := envLookup(envVars)
-	mayExpand := expansionSet(expandable, literal)
+	contextVars := maps.Clone(src.context)
+	if contextVars == nil {
+		contextVars = map[string]string{}
+	}
+	contextVars["WORKSPACE"] = workspace
+	contextVars["DIR"] = path
+	contextVars["ATLANTIS_TERRAFORM_VERSION"] = v.String()
 	for _, arg := range args {
-		if mayExpand[arg] {
+		switch src.expansion(arg) {
+		case expandEnv:
 			argv = append(argv, os.Expand(arg, expand))
-			continue
+		case expandContext:
+			argv = append(argv, expandContextVars(arg, contextVars))
+		default:
+			argv = append(argv, arg)
 		}
-		argv = append(argv, arg)
 	}
 
 	// The display string keeps variable references unexpanded. It ends up in
@@ -517,35 +528,69 @@ func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribut
 	return argv, display, envVars, nil
 }
 
-// literalArgs returns the arguments that must never be expanded: those from
-// the pull request comment and those from repo-side inputs.
-func literalArgs(ctx command.ProjectContext) []string {
-	if len(ctx.LiteralArgs) == 0 {
-		return ctx.CommentArgs
-	}
-	return append(slices.Clone(ctx.CommentArgs), ctx.LiteralArgs...)
+// argSources records where the arguments of a command came from, which
+// decides how far each may be expanded. Arguments are matched by value, so an
+// argument that appears in several sources gets the most restrictive treatment.
+type argSources struct {
+	// expandable are operator-configured (server-side) arguments. They may
+	// reference any variable of the command's environment.
+	expandable []string
+	// repo are arguments from repo-side inputs, which pull request authors
+	// control. They may reference only the Atlantis context variables, never
+	// the Atlantis process environment.
+	repo []string
+	// comment are arguments from the pull request comment. They are never
+	// expanded.
+	comment []string
+	// context holds the pull request context values repo arguments may
+	// reference, besides WORKSPACE, DIR and ATLANTIS_TERRAFORM_VERSION.
+	context map[string]string
 }
 
-// expansionSet returns the arguments whose environment variable references may
-// be expanded. Only operator-configured extra_args qualify. Anything that also
-// appears in literal, which is the set of arguments taken from a pull request
-// comment, is excluded, so that a commenter cannot have a value expanded by
-// repeating an operator's argument back.
-func expansionSet(expandable []string, literal []string) map[string]bool {
-	if len(expandable) == 0 {
-		return nil
+func argSourcesOf(ctx command.ProjectContext) argSources {
+	return argSources{expandable: ctx.ExpandableArgs, repo: ctx.LiteralArgs, comment: ctx.CommentArgs, context: ctx.ContextVars()}
+}
+
+type expansion int
+
+const (
+	expandNone expansion = iota
+	expandContext
+	expandEnv
+)
+
+// expansion returns how far arg may be expanded. A comment argument is never
+// expanded, so a commenter cannot have a value expanded by repeating an
+// operator's argument back; a repo argument that repeats an operator's argument
+// likewise only gets context expansion.
+func (s argSources) expansion(arg string) expansion {
+	switch {
+	case slices.Contains(s.comment, arg):
+		return expandNone
+	case slices.Contains(s.repo, arg):
+		return expandContext
+	case slices.Contains(s.expandable, arg):
+		return expandEnv
+	default:
+		return expandNone
 	}
-	fromComment := make(map[string]bool, len(literal))
-	for _, arg := range literal {
-		fromComment[arg] = true
-	}
-	set := make(map[string]bool, len(expandable))
-	for _, arg := range expandable {
-		if !fromComment[arg] {
-			set[arg] = true
+}
+
+// contextVarRef matches $NAME and ${NAME}.
+var contextVarRef = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// expandContextVars replaces references to names in vars. Other references
+// are left as written, so a repo argument cannot read the Atlantis process
+// environment.
+func expandContextVars(arg string, vars map[string]string) string {
+	return contextVarRef.ReplaceAllStringFunc(arg, func(ref string) string {
+		m := contextVarRef.FindStringSubmatch(ref)
+		name := m[1] + m[2]
+		if v, ok := vars[name]; ok {
+			return v
 		}
-	}
-	return set
+		return ref
+	})
 }
 
 // envLookup returns a lookup function over environ, with later entries winning
@@ -588,7 +633,7 @@ func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string,
 	var display string
 	var envVars []string
 	if err == nil {
-		argv, display, envVars, err = c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, literalArgs(ctx), ctx.Tool)
+		argv, display, envVars, err = c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, argSourcesOf(ctx), ctx.Tool)
 	}
 	if err != nil {
 		// The signature of `RunCommandAsync` doesn't provide for returning an immediate error, only one
