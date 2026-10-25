@@ -68,6 +68,10 @@ type ProjectContext struct {
 	// the Terraform client. ProjectContext is passed by value, so this does not
 	// leak between steps.
 	ExpandableArgs []string
+	// LiteralArgs are arguments that came from repo-side inputs. Like comment
+	// args, they are never expanded, even when a step runner marks them
+	// expandable.
+	LiteralArgs []string
 	// CommentArgs are the extra arguments that were added to the atlantis
 	// command, ex. atlantis plan -- -target=resource, exactly as the user wrote
 	// them. Use these when building an argument vector for a command Atlantis

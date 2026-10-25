@@ -85,6 +85,19 @@ func (i Inputs) args(stepName string) []string {
 	return append(args, i.ExtraArgs[stepName]...)
 }
 
+// AllArgs returns every argument the inputs add to any built-in step.
+func (i Inputs) AllArgs() []string {
+	var all []string
+	for _, step := range InputsExtraArgsSteps {
+		for _, arg := range i.args(step) {
+			if !slices.Contains(all, arg) {
+				all = append(all, arg)
+			}
+		}
+	}
+	return all
+}
+
 // Apply returns a copy of w whose built-in steps carry the inputs'
 // arguments. Steps that are not built in are left unchanged.
 func (i Inputs) Apply(w Workflow) Workflow {

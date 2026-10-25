@@ -53,3 +53,15 @@ func TestMergeProjectCfgProjectInputsOverrideWhenAllowed(t *testing.T) {
 	err := notAllowed.ValidateRepoCfg(valid.RepoCfg{Projects: []valid.Project{project}}, "github.com/org/repo")
 	ErrContains(t, "repo config not allowed to set 'inputs' key", err)
 }
+
+func TestMergeProjectCfgRepoInputArgsAreLiteral(t *testing.T) {
+	project := valid.Project{Dir: ".", Inputs: &valid.Inputs{Vars: map[string]string{"t": "$ATLANTIS_GH_TOKEN"}}}
+	g := cfgWithInputs([]string{valid.InputsKey})
+	m := g.MergeProjectCfg(logging.NewNoopLogger(t), "github.com/org/repo", project, valid.RepoCfg{})
+	Equals(t, []string{"-var-file=server.tfvars", "-var", "t=$ATLANTIS_GH_TOKEN"}, planArgs(m))
+	Equals(t, []string{"-var", "t=$ATLANTIS_GH_TOKEN"}, m.LiteralArgs)
+
+	// Server-side inputs alone stay expandable.
+	m = g.MergeProjectCfg(logging.NewNoopLogger(t), "github.com/org/repo", valid.Project{Dir: "."}, valid.RepoCfg{})
+	Equals(t, 0, len(m.LiteralArgs))
+}

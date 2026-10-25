@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -426,7 +427,7 @@ func (c *DefaultClient) prepExecCmd(ctx command.ProjectContext, d terraform.Dist
 	if err != nil {
 		return "", nil, err
 	}
-	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
+	argv, display, envVars, err := c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, literalArgs(ctx), ctx.Tool)
 	if err != nil {
 		return "", nil, err
 	}
@@ -516,6 +517,15 @@ func (c *DefaultClient) prepCmd(log logging.SimpleLogging, d terraform.Distribut
 	return argv, display, envVars, nil
 }
 
+// literalArgs returns the arguments that must never be expanded: those from
+// the pull request comment and those from repo-side inputs.
+func literalArgs(ctx command.ProjectContext) []string {
+	if len(ctx.LiteralArgs) == 0 {
+		return ctx.CommentArgs
+	}
+	return append(slices.Clone(ctx.CommentArgs), ctx.LiteralArgs...)
+}
+
 // expansionSet returns the arguments whose environment variable references may
 // be expanded. Only operator-configured extra_args qualify. Anything that also
 // appears in literal, which is the set of arguments taken from a pull request
@@ -578,7 +588,7 @@ func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string,
 	var display string
 	var envVars []string
 	if err == nil {
-		argv, display, envVars, err = c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, ctx.CommentArgs, ctx.Tool)
+		argv, display, envVars, err = c.prepCmd(ctx.Log, d, v, workspace, path, args, customEnvVars, ctx.ExpandableArgs, literalArgs(ctx), ctx.Tool)
 	}
 	if err != nil {
 		// The signature of `RunCommandAsync` doesn't provide for returning an immediate error, only one

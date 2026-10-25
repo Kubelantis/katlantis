@@ -155,6 +155,10 @@ type MergedProjectCfg struct {
 	SilencePRComments         []string
 	// Env is set for every step of the project (from inputs).
 	Env map[string]string
+	// LiteralArgs are the step arguments that came from repo-side inputs.
+	// They are passed literally: unlike server-side arguments, environment
+	// variable references in them are never expanded.
+	LiteralArgs []string
 	// Tool runs the built-in steps; see Tools.
 	Tool string
 	// Stack is the CDK Terrain stack, for tool cdktn.
@@ -411,9 +415,11 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		tool = *proj.Tool
 	}
 	inputs := g.matchingInputs(repoID)
+	var literalArgs []string
 	if slices.Contains(allowedOverrides, InputsKey) && proj.Inputs != nil {
 		log.Debug("overriding server-defined %s with repo settings", InputsKey)
 		inputs = inputs.Override(proj.Inputs)
+		literalArgs = proj.Inputs.AllArgs()
 	}
 	workflow := inputs.Apply(NativeWorkflow())
 
@@ -449,6 +455,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		PolicyCheck:               policyCheck,
 		SilencePRComments:         silencePRComments,
 		Env:                       inputs.Env,
+		LiteralArgs:               literalArgs,
 		Tool:                      tool,
 		Stack:                     proj.Stack,
 	}

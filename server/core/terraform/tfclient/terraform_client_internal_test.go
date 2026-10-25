@@ -608,6 +608,39 @@ func TestDefaultClient_RunCommandAsync_ExpandsCustomEnvVars(t *testing.T) {
 	Equals(t, "plan -var-file staging.tfvars", out)
 }
 
+// Arguments from repo-side inputs come from the pull request author, so their
+// environment variable references must reach the process literally even though
+// the step runner marks every extra argument expandable.
+func TestDefaultClient_RunCommandWithVersion_RepoInputArgsStayLiteral(t *testing.T) {
+	v, err := version.NewVersion("0.11.11")
+	Ok(t, err)
+	tmp := t.TempDir()
+	t.Setenv("ATLANTIS_TEST_SECRET", "s3cr3t-value")
+	ctx := command.ProjectContext{
+		Log:        logging.NewNoopLogger(t),
+		Workspace:  "default",
+		RepoRelDir: ".",
+		User:       models.User{Username: "username"},
+		Pull:       models.PullRequest{Num: 2},
+		BaseRepo:   models.Repo{FullName: "owner/repo", Owner: "owner", Name: "repo"},
+	}
+	client := &DefaultClient{
+		defaultVersion:          v,
+		terraformPluginCacheDir: tmp,
+		overrideTF:              "echo",
+		projectCmdOutputHandler: jobmocks.NewMockProjectCommandOutputHandler(),
+	}
+	distribution := terraform.NewDistributionTerraformWithDownloader(terraform_mocks.NewMockDownloader())
+
+	ctx.ExpandableArgs = []string{"-var", "t=$ATLANTIS_TEST_SECRET", "-var-file", "$CUSTOM_TFVARS"}
+	ctx.LiteralArgs = []string{"-var", "t=$ATLANTIS_TEST_SECRET"}
+	out, err := client.RunCommandWithVersion(ctx, tmp, []string{"-var", "t=$ATLANTIS_TEST_SECRET", "-var-file", "$CUSTOM_TFVARS"},
+		map[string]string{"CUSTOM_TFVARS": "staging.tfvars"}, distribution, nil, "default")
+
+	Ok(t, err)
+	Equals(t, "-var t=$ATLANTIS_TEST_SECRET -var-file staging.tfvars\n", out)
+}
+
 // The argv Atlantis executes has environment variables expanded, but the string
 // Atlantis logs and puts in failing pull request comments must not: an
 // extra_args entry may reference a variable holding a credential.
