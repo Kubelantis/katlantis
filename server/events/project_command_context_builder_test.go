@@ -129,6 +129,39 @@ func TestProjectCommandContextBuilder_PullStatus(t *testing.T) {
 
 		assert.True(t, result[0].AbortOnExecutionOrderFail)
 	})
+
+	t.Run("plan risk comes from the same workspace", func(t *testing.T) {
+		projCfg.Name = ""
+		projCfg.Workspace = "prod"
+		defer func() { projCfg.Workspace = projWorkspace }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, "prod", "", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, "prod", "", false, "")).ThenReturn(expectedApplyCmt)
+		staging := &models.PlanRisk{Tier: models.PlanRiskLow}
+		prod := &models.PlanRisk{Tier: models.PlanRiskCritical}
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PlannedPlanStatus, RepoRelDir: "dir1", Workspace: "staging", PlanRisk: staging},
+			{Status: models.PlannedPlanStatus, RepoRelDir: "dir1", Workspace: "prod", PlanRisk: prod},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Same(t, prod, result[0].ProjectPlanRisk)
+	})
+
+	t.Run("plan risk is not taken from another workspace", func(t *testing.T) {
+		projCfg.Name = ""
+		projCfg.Workspace = "prod"
+		defer func() { projCfg.Workspace = projWorkspace }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, "prod", "", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, "prod", "", false, "")).ThenReturn(expectedApplyCmt)
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PlannedPlanStatus, RepoRelDir: "dir1", Workspace: "staging", PlanRisk: &models.PlanRisk{Tier: models.PlanRiskLow}},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Nil(t, result[0].ProjectPlanRisk)
+	})
 }
 
 func TestProjectCommandContextBuilder_PropagatesAPIWorkflowFlags(t *testing.T) {

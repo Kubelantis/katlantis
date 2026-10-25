@@ -291,13 +291,20 @@ func newProjectCommandContext(ctx *command.Context,
 			if projCfg.Name == "" && project.RepoRelDir == projCfg.RepoRelDir {
 				projectPlanStatus = project.Status
 				projectPolicyStatus = project.PolicyStatus
-				projectPlanRisk = project.PlanRisk
 				break
 			}
 
 			if projCfg.Name != "" && project.ProjectName == projCfg.Name {
 				projectPlanStatus = project.Status
 				projectPolicyStatus = project.PolicyStatus
+				break
+			}
+		}
+		// The plan risk gates apply, so it must come from this exact project:
+		// matching on the directory alone would let another workspace's
+		// assessment stand in for this one.
+		for _, project := range ctx.PullStatus.Projects {
+			if project.RepoRelDir == projCfg.RepoRelDir && project.Workspace == projCfg.Workspace && project.ProjectName == projCfg.Name {
 				projectPlanRisk = project.PlanRisk
 				break
 			}
