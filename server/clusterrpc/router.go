@@ -183,6 +183,28 @@ type Router struct {
 	PlanHolderWait time.Duration
 	// PlanHolderPoll is how often membership is checked while waiting.
 	PlanHolderPoll time.Duration
+	// Drain counts commands while they are being routed, so shutdown waits
+	// for a forward (and any wait for a plan holder) to finish; optional.
+	Drain Ops
+}
+
+// Ops tracks in-progress operations; *events.Drainer implements it.
+type Ops interface {
+	StartOp() bool
+	OpDone()
+}
+
+// startOp counts a routed command. It returns false when shutting down; the
+// caller then runs the command locally, where the local runner reports that
+// Atlantis is shutting down.
+func (r *Router) startOp() (done func(), ok bool) {
+	if r.Drain == nil {
+		return func() {}, true
+	}
+	if !r.Drain.StartOp() {
+		return nil, false
+	}
+	return r.Drain.OpDone, true
 }
 
 // PlanHolders is implemented by kubedb.KubeDB.
@@ -275,6 +297,10 @@ func (r *Router) forward(ctx context.Context, owner cluster.Member, path string,
 	ctx, span := tracing.Start(ctx, "atlantis.cluster.forward",
 		tracing.AttrRepo.String(repo), tracing.AttrPull.Int(pullNum), tracing.AttrReplica.String(owner.Identity))
 	var err error
+	// uncertain is set once any attempt may have reached the owner. A later
+	// attempt that is refused (the owner started draining, or closed its
+	// listener) does not prove the earlier one was not accepted.
+	uncertain := false
 	backoff := 250 * time.Millisecond
 	for attempt := range 3 {
 		if attempt > 0 {
@@ -290,6 +316,7 @@ func (r *Router) forward(ctx context.Context, owner cluster.Member, path string,
 		if err == nil || notDelivered(err) || ctx.Err() != nil {
 			break
 		}
+		uncertain = true
 	}
 	tracing.End(span, err)
 	switch {
@@ -297,7 +324,7 @@ func (r *Router) forward(ctx context.Context, owner cluster.Member, path string,
 		r.Scope.Counter("forward_success").Inc(1)
 		r.Logger.Debug("forwarded %s#%d to owner %s", repo, pullNum, owner.Identity)
 		return delivered
-	case notDelivered(err):
+	case notDelivered(err) && !uncertain:
 		r.Scope.Counter("forward_error").Inc(1)
 		r.Logger.Warn("owner %s did not accept %s#%d, running locally: %s", owner.Identity, repo, pullNum, err)
 		return rejected
@@ -365,6 +392,12 @@ func (r *Router) RunCommentCommandWithContext(ctx context.Context, baseRepo mode
 	runLocal := func() {
 		r.Local.RunCommentCommandWithContext(ctx, baseRepo, maybeHeadRepo, maybePull, user, pullNum, cmd)
 	}
+	done, ok := r.startOp()
+	if !ok {
+		runLocal()
+		return
+	}
+	defer done()
 	if cmd != nil && cmd.Name == command.Apply {
 		// Applies go where the plan files are, not to the hash owner.
 		holder, local, ok := r.planHolder(ctx, baseRepo, pullNum)
@@ -391,6 +424,12 @@ func (r *Router) RunCommentCommandWithContext(ctx context.Context, baseRepo mode
 // RunAutoplanCommandWithContext implements events.ContextCommandRunner.
 func (r *Router) RunAutoplanCommandWithContext(ctx context.Context, baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User) {
 	runLocal := func() { r.Local.RunAutoplanCommandWithContext(ctx, baseRepo, headRepo, pull, user) }
+	done, ok := r.startOp()
+	if !ok {
+		runLocal()
+		return
+	}
+	defer done()
 	if owner, ok := r.ownerFor(baseRepo, pull.Num); ok {
 		req := commandRequest{Kind: kindAutoplan, BaseRepo: baseRepo, HeadRepo: &headRepo, Pull: &pull, User: user, PullNum: pull.Num, ForwardedFrom: r.Owners.Identity()}
 		r.dispatch(ctx, owner, req, runLocal)

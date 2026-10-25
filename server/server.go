@@ -1119,6 +1119,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		JobLogDir:           jobLogDir(userConfig),
 		SharedPlans:         externalPlanStore(userConfig, globalCfg),
 		PlanHolderWait:      time.Duration(userConfig.ClusterPlanHolderWaitSeconds) * time.Second,
+		Drainer:             drainer,
 	})
 	eventsController := &events_controllers.VCSEventsController{
 		CommandRunner:                   clusterRouter,

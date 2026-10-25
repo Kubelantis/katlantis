@@ -386,3 +386,124 @@ func TestCleanUpPeersReachesEveryOtherReplica(t *testing.T) {
 		Equals(t, []int{9}, p.pulls)
 	}
 }
+
+type switchDrain struct{ on atomic.Bool }
+
+func (d *switchDrain) GetStatus() events.DrainStatus {
+	return events.DrainStatus{ShuttingDown: d.on.Load()}
+}
+
+// The owner accepts the command, the ack is lost, and the owner starts
+// draining before the retry arrives. The retry must be acknowledged as a
+// duplicate, not refused, or the sender would run the command again.
+func TestRetryReachingDrainingOwnerIsNotRunTwice(t *testing.T) {
+	remote, local := newFakeRunner(), newFakeRunner()
+	d := &switchDrain{}
+	s := &clusterrpc.Server{Token: token, Local: remote, LocalClean: remote, Jobs: jobs{}, JobsHandler: http.NotFoundHandler(), Logger: logging.NewNoopLogger(t), Drain: d}
+	inner := s.Handler()
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		inner.ServeHTTP(rec, r)
+		if n.Add(1) == 1 {
+			d.on.Store(true)
+			time.Sleep(400 * time.Millisecond)
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+	owner := cluster.Member{Identity: "b", Address: srv.URL}
+	r := &clusterrpc.Router{
+		Local: local, LocalClean: local,
+		Owners: staticOwners{self: "a", owner: owner, members: []cluster.Member{{Identity: "a"}, owner}},
+		Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
+		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: 100 * time.Millisecond,
+	}
+
+	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
+	remote.wait(t)
+	time.Sleep(200 * time.Millisecond)
+	Equals(t, 1, remote.count())
+	Equals(t, 0, local.count())
+}
+
+// An attempt that may have reached the owner keeps the outcome ambiguous even
+// if a later attempt is refused: the refusal does not prove the first attempt
+// was not accepted.
+func TestRefusalAfterAmbiguousAttemptStaysAmbiguous(t *testing.T) {
+	local := newFakeRunner()
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n.Add(1) == 1 {
+			time.Sleep(400 * time.Millisecond)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		http.Error(w, "shutting down", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	owner := cluster.Member{Identity: "b", Address: srv.URL}
+	var comments []string
+	r := &clusterrpc.Router{
+		Local: local, LocalClean: local,
+		Owners: staticOwners{self: "a", owner: owner, members: []cluster.Member{{Identity: "a"}, owner}},
+		Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
+		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: 100 * time.Millisecond,
+		Notify: func(_ models.Repo, _ int, msg string) error { comments = append(comments, msg); return nil },
+	}
+
+	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
+	Equals(t, 0, local.count())
+	Equals(t, 1, len(comments))
+}
+
+// Shutdown must wait for a command that is still being forwarded: the
+// webhook was already acknowledged, so dropping it would lose the command.
+func TestShutdownWaitsForRoutedCommand(t *testing.T) {
+	remote := newFakeRunner()
+	release := make(chan struct{})
+	s := &clusterrpc.Server{Token: token, Local: remote, LocalClean: remote, Jobs: jobs{}, JobsHandler: http.NotFoundHandler(), Logger: logging.NewNoopLogger(t), Drain: drain{}}
+	inner := s.Handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	d := &events.Drainer{}
+	r := router(t, newFakeRunner(), cluster.Member{Identity: "b", Address: srv.URL})
+	r.Drain = d
+
+	routed := make(chan struct{})
+	go func() {
+		r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
+		close(routed)
+	}()
+	Assert(t, waitFor(func() bool { return d.GetStatus().InProgressOps == 1 }), "routing was not counted as an operation")
+
+	shutdown := make(chan struct{})
+	go func() { d.ShutdownBlocking(); close(shutdown) }()
+	select {
+	case <-shutdown:
+		t.Fatal("shutdown finished while a command was still being forwarded")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-routed
+	select {
+	case <-shutdown:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not finish after the forward completed")
+	}
+	Equals(t, 1, remote.count())
+}
+
+func waitFor(cond func() bool) bool {
+	for range 100 {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
