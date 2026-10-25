@@ -194,17 +194,16 @@ type Ops interface {
 	OpDone()
 }
 
-// startOp counts a routed command. It returns false when shutting down; the
-// caller then runs the command locally, where the local runner reports that
-// Atlantis is shutting down.
-func (r *Router) startOp() (done func(), ok bool) {
-	if r.Drain == nil {
-		return func() {}, true
+// startOp counts a routed command so shutdown waits for it. While shutting
+// down nothing new is counted, but the command is still routed: forwarding to
+// a replica that is not shutting down is how it survives a rolling update.
+// If it ends up running here, the local runner reports that Atlantis is
+// shutting down.
+func (r *Router) startOp() (done func()) {
+	if r.Drain == nil || !r.Drain.StartOp() {
+		return func() {}
 	}
-	if !r.Drain.StartOp() {
-		return nil, false
-	}
-	return r.Drain.OpDone, true
+	return r.Drain.OpDone
 }
 
 // PlanHolders is implemented by kubedb.KubeDB.
@@ -392,12 +391,7 @@ func (r *Router) RunCommentCommandWithContext(ctx context.Context, baseRepo mode
 	runLocal := func() {
 		r.Local.RunCommentCommandWithContext(ctx, baseRepo, maybeHeadRepo, maybePull, user, pullNum, cmd)
 	}
-	done, ok := r.startOp()
-	if !ok {
-		runLocal()
-		return
-	}
-	defer done()
+	defer r.startOp()()
 	if cmd != nil && cmd.Name == command.Apply {
 		// Applies go where the plan files are, not to the hash owner.
 		holder, local, ok := r.planHolder(ctx, baseRepo, pullNum)
@@ -424,12 +418,7 @@ func (r *Router) RunCommentCommandWithContext(ctx context.Context, baseRepo mode
 // RunAutoplanCommandWithContext implements events.ContextCommandRunner.
 func (r *Router) RunAutoplanCommandWithContext(ctx context.Context, baseRepo models.Repo, headRepo models.Repo, pull models.PullRequest, user models.User) {
 	runLocal := func() { r.Local.RunAutoplanCommandWithContext(ctx, baseRepo, headRepo, pull, user) }
-	done, ok := r.startOp()
-	if !ok {
-		runLocal()
-		return
-	}
-	defer done()
+	defer r.startOp()()
 	if owner, ok := r.ownerFor(baseRepo, pull.Num); ok {
 		req := commandRequest{Kind: kindAutoplan, BaseRepo: baseRepo, HeadRepo: &headRepo, Pull: &pull, User: user, PullNum: pull.Num, ForwardedFrom: r.Owners.Identity()}
 		r.dispatch(ctx, owner, req, runLocal)

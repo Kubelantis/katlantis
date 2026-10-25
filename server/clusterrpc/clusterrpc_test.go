@@ -512,6 +512,29 @@ func TestShutdownWaitsForRoutedCommand(t *testing.T) {
 	Equals(t, 1, remote.count())
 }
 
+// A replica that is shutting down still forwards commands it receives: the
+// owner is not shutting down and can run them, as it could before the drain
+// hook was added.
+func TestDrainingReplicaStillForwards(t *testing.T) {
+	remote := newFakeRunner()
+	s := &clusterrpc.Server{Token: token, Local: remote, LocalClean: remote, Jobs: jobs{}, JobsHandler: http.NotFoundHandler(), Logger: logging.NewNoopLogger(t), Drain: drain{}}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	d := &events.Drainer{}
+	d.ShutdownBlocking()
+	local := newFakeRunner()
+	r := router(t, local, cluster.Member{Identity: "b", Address: srv.URL})
+	r.Drain = d
+
+	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
+	remote.wait(t)
+	r.RunAutoplanCommandWithContext(context.Background(), repo, repo, models.PullRequest{Num: 1, BaseRepo: repo}, models.User{})
+	remote.wait(t)
+	Equals(t, 2, remote.count())
+	Equals(t, 0, local.count())
+	Equals(t, 0, d.GetStatus().InProgressOps)
+}
+
 func waitFor(cond func() bool) bool {
 	for range 100 {
 		if cond() {
