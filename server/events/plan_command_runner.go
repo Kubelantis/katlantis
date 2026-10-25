@@ -120,6 +120,7 @@ func (p *PlanCommandRunner) runAutoplan(ctx *command.Context) {
 
 	var err error
 	ctx.PullRequestStatus, err = p.pullReqStatusFetcher.FetchPullStatus(ctx.Log, pull)
+	ctx.PullRequestStatusFetched = err == nil
 	if err != nil {
 		// On error we continue the request with mergeable assumed false.
 		// We want to continue because not all plan's will need this status,
@@ -225,6 +226,7 @@ func (p *PlanCommandRunner) run(ctx *command.Context, cmd *CommentCommand) {
 	defer unlockPullPlan()
 
 	ctx.PullRequestStatus, err = p.pullReqStatusFetcher.FetchPullStatus(ctx.Log, pull)
+	ctx.PullRequestStatusFetched = err == nil
 	if err != nil {
 		// On error we continue the request with mergeable assumed false.
 		// We want to continue because not all apply's will need this status,

@@ -537,6 +537,9 @@ func (p *DefaultProjectCommandBuilder) withToolProjects(ctx *command.Context, re
 	if !ok || !p.autoDiscoverModeEnabled(ctx, repoCfg) {
 		return repoCfg, nil
 	}
+	if err := p.toolDiscoveryAllowed(ctx, tool); err != nil {
+		return repoCfg, err
+	}
 	discovered, err := discoverer.Discover(ctx.Log, repoDir)
 	if err != nil {
 		return repoCfg, fmt.Errorf("discovering %s projects: %w", tool, err)
@@ -554,6 +557,29 @@ func (p *DefaultProjectCommandBuilder) withToolProjects(ctx *command.Context, re
 	}
 	repoCfg.Projects = projects
 	return repoCfg, nil
+}
+
+// toolDiscoveryAllowed enforces the server-side `approved` plan requirement
+// on tool discovery. Discovering Terragrunt units or synthesizing CDK Terrain
+// stacks runs code from the pull request, so when plans need approval,
+// discovery must too. Commands that did not fetch the pull request status
+// may discover only for a head commit that was already planned, because that
+// plan passed the requirement.
+func (p *DefaultProjectCommandBuilder) toolDiscoveryAllowed(ctx *command.Context, tool string) error {
+	if !slices.Contains(p.GlobalCfg.RepoPlanRequirements(ctx.Log, ctx.Pull.BaseRepo.ID()), raw.ApprovedRequirement) {
+		return nil
+	}
+	if ctx.API && ctx.Pull.Num <= 0 && ctx.SkipPRRequirements {
+		return nil
+	}
+	if ctx.PullRequestStatusFetched {
+		if ctx.PullRequestStatus.ApprovalStatus.IsApproved {
+			return nil
+		}
+	} else if ctx.PullStatus != nil && ctx.PullStatus.Pull.HeadCommit == ctx.Pull.HeadCommit && len(ctx.PullStatus.Projects) > 0 {
+		return nil
+	}
+	return fmt.Errorf("discovering %s projects runs code from the pull request, so it needs the pull request to be approved first (plan_requirements: [%s])", tool, raw.ApprovedRequirement)
 }
 
 // shouldIgnoreTargetedDir checks whether a targeted -d command should be

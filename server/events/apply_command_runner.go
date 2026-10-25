@@ -176,6 +176,7 @@ func (a *ApplyCommandRunner) Run(ctx *command.Context, cmd *CommentCommand) {
 	// the mergeability status of the pull request.
 	// This sets the approved, mergeable, and sqlocked status in the context.
 	ctx.PullRequestStatus, err = a.pullReqStatusFetcher.FetchPullStatus(ctx.Log, pull)
+	ctx.PullRequestStatusFetched = err == nil
 	if err != nil {
 		// On error we continue the request with mergeable assumed false.
 		// We want to continue because not all apply's will need this status,

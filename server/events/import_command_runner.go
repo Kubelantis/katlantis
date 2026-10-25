@@ -45,6 +45,7 @@ func (v *ImportCommandRunner) Run(ctx *command.Context, cmd *CommentCommand) {
 	// the mergeability status of the pull request.
 	// This sets the approved, mergeable, and sqlocked status in the context.
 	ctx.PullRequestStatus, err = v.pullReqStatusFetcher.FetchPullStatus(ctx.Log, ctx.Pull)
+	ctx.PullRequestStatusFetched = err == nil
 	if err != nil {
 		// On error we continue the request with mergeable assumed false.
 		// We want to continue because not all import will need this status,

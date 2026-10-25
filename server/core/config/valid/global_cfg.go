@@ -525,6 +525,13 @@ func (g GlobalCfg) RepoTool(repoID string) string {
 	return tool
 }
 
+// RepoPlanRequirements returns the server-side plan requirements for repoID,
+// before any repo config override.
+func (g GlobalCfg) RepoPlanRequirements(log logging.SimpleLogging, repoID string) []string {
+	planReqs, _, _, _, _, _, _, _, _ := g.getMatchingCfg(log, repoID)
+	return planReqs
+}
+
 // matchingInputs returns the inputs of the last server-side repo entry that
 // matches repoID and sets inputs, like the other repo settings.
 func (g GlobalCfg) matchingInputs(repoID string) Inputs {

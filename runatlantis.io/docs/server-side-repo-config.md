@@ -273,6 +273,8 @@ repos:
 
 When the server-side `tool` of a repo is `terragrunt` and [autodiscovery](repo-level-atlantis-yaml.md#autodiscovery-config) is on (the default when `atlantis.yaml` lists no projects), Atlantis runs `terragrunt find` on each pull request and makes every unit a project. No `atlantis.yaml` or terragrunt-atlantis-config is needed.
 
+`terragrunt find` evaluates the pull request's configuration, including `run_cmd`. When the server-side `plan_requirements` include `approved`, Atlantis does not run it until the pull request is approved, so autoplan on an unapproved pull request reports that approval is needed. The same applies to CDK Terrain stack discovery.
+
 - A `terragrunt.hcl` that other units include (a parent config) is not a project.
 - A unit autoplans when a file changes in its directory, in a file it reads (included configs, `read_terragrunt_config`, its `terraform.source` module), or in any of those for a unit it depends on through `dependency` or `dependencies` blocks, directly or not.
 - Units plan and apply after the units they depend on, through [execution order groups](repo-level-atlantis-yaml.md#order-of-planning-applying). A unit planned before its dependency is applied uses the dependency's `mock_outputs`; plan it again after the apply.
@@ -311,7 +313,7 @@ repos:
 
 #### CDK Terrain Stack Discovery
 
-When autodiscovery is on, Atlantis finds every `cdktf.json` (outside `node_modules` and `cdktf.out`), synthesizes the app and makes each stack a project:
+When autodiscovery is on, Atlantis finds every `cdktf.json` (outside `node_modules` and `cdktf.out`), synthesizes the app and makes each stack a project. Synthesizing runs the app's code, so with `plan_requirements: [approved]` on the server it waits until the pull request is approved, as for [Terragrunt unit discovery](#terragrunt-unit-discovery).
 
 - The project is named after the stack, prefixed with the app directory unless the app is at the repository root, and plans with `atlantis plan -p <name>`.
 - A stack autoplans when any file of its app changes, except `cdktf.out`, `node_modules` and apps nested inside it.
