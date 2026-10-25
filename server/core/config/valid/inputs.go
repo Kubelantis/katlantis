@@ -35,8 +35,14 @@ type Inputs struct {
 // InputsExtraArgsSteps are the built-in steps extra_args may target.
 var InputsExtraArgsSteps = []string{"init", "plan", "apply", "show", "policy_check", "import", "state_rm"}
 
-// Override returns base with every field that is set in o replacing the
-// corresponding field of base. A nil o returns base unchanged.
+// Override returns base with the fields set in o applied on top. VarFiles,
+// Vars and BackendConfig set in o replace those of base. Env is merged by name,
+// o winning. ExtraArgs are merged by step, with the arguments of o appended
+// after those of base, so o cannot remove an argument base passes (such as
+// -plugin-dir). A nil o returns base unchanged.
+//
+// o is repo config, which pull request authors control; base is the
+// operator's server-side config.
 func (base Inputs) Override(o *Inputs) Inputs {
 	if o == nil {
 		return base
@@ -52,10 +58,28 @@ func (base Inputs) Override(o *Inputs) Inputs {
 		out.BackendConfig = o.BackendConfig
 	}
 	if o.Env != nil {
-		out.Env = o.Env
+		out.Env = maps.Clone(base.Env)
+		if out.Env == nil {
+			out.Env = map[string]string{}
+		}
+		maps.Copy(out.Env, o.Env)
 	}
 	if o.ExtraArgs != nil {
-		out.ExtraArgs = o.ExtraArgs
+		out.ExtraArgs = maps.Clone(base.ExtraArgs)
+		if out.ExtraArgs == nil {
+			out.ExtraArgs = map[string][]string{}
+		}
+		for step, args := range o.ExtraArgs {
+			merged := slices.Clone(out.ExtraArgs[step])
+			for _, arg := range args {
+				if !slices.Contains(merged, arg) {
+					merged = append(merged, arg)
+				}
+			}
+			if len(merged) > 0 {
+				out.ExtraArgs[step] = merged
+			}
+		}
 	}
 	return out
 }
@@ -109,7 +133,7 @@ func (i Inputs) ValidateRepoSide() error {
 			return fmt.Errorf("inputs.env.%s cannot be set in repo config; set it in server-side config instead", k)
 		}
 	}
-	if len(i.ExtraArgs["policy_check"]) > 0 {
+	if _, ok := i.ExtraArgs["policy_check"]; ok {
 		return errors.New("inputs.extra_args.policy_check cannot be set in repo config; set it in server-side config instead")
 	}
 	for _, arg := range i.ExtraArgs["init"] {

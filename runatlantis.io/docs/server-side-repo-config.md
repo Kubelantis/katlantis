@@ -216,7 +216,7 @@ projects:
 
 ### Native Inputs
 
-`inputs` configures the built-in steps (`init`, `plan`, `apply` and the others). Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` replace it field by field.
+`inputs` configures the built-in steps (`init`, `plan`, `apply` and the others). Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` override it (see [Repos Can Set Their Own Native Inputs Or Tool](#repos-can-set-their-own-native-inputs-or-tool) for how the two combine).
 
 ```yaml
 repos:
@@ -407,13 +407,17 @@ projects:
   tool: terragrunt
 ```
 
-Project inputs replace the server-side ones field by field.
+Project inputs combine with the server-side ones:
+
+- `var_files`, `vars` and `backend_config` set in a project replace the server-side value.
+- `env` is merged by name; a project value wins for a name both set.
+- `extra_args` is merged by step. A project's arguments are added after the server-side ones for the same step, so a project cannot remove an argument the server passes.
 
 Repo config is written by pull request authors, so its inputs are limited:
 
 - Environment variable references such as `$NAME` in repo-side `vars`, `var_files`, `backend_config` and `extra_args` are passed to Terraform as written, never expanded from the Atlantis server's environment. Server-side inputs are still expanded.
 - Repo-side `env` cannot set variables that change which programs or plugins run, or Atlantis's own settings: `PATH`, `BASH_ENV`, `ENV`, `HOME`, `NODE_OPTIONS`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_PLUGIN_CACHE_DIR`, `TF_DATA_DIR`, `XDG_DATA_HOME`, `XDG_DATA_DIRS`, `TG_TF_PATH`, `TERRAGRUNT_TFPATH`, or names starting with `LD_`, `DYLD_`, `GIT_`, `ATLANTIS_` or `TF_CLI_ARGS`.
-- Repo-side `extra_args` cannot target `policy_check`, and `extra_args.init` cannot pass `-plugin-dir`.
+- Repo-side `extra_args` cannot set the `policy_check` key, even to an empty list, and `extra_args.init` cannot pass `-plugin-dir`.
 
 Set these in server-side `inputs` instead.
 
