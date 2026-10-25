@@ -122,6 +122,28 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
+  # The Kubernetes lock, pull status and routing tests skip themselves without
+  # a real API server, so `make test-all` never exercises them. envtest
+  # provides kube-apiserver and etcd.
+  test-kube:
+    needs: [changes]
+    if: needs.changes.outputs.should-run-tests == 'true'
+    name: Kubernetes tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - run: make test-kube
+
   skip-test:
     needs: [changes]
     if: needs.changes.outputs.should-run-tests == 'false'
