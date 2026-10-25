@@ -204,15 +204,29 @@ func TestJobProxyServesRemoteJob(t *testing.T) {
 	Equals(t, "local", get("/jobs/unknown"))
 }
 
-// slowAck runs the real handler, then withholds the response past the
-// sender's timeout: the owner accepted the command but the sender cannot know.
-func slowAck(inner http.Handler, delay time.Duration, slowCalls int) http.Handler {
+// ackTimeout is the sender's per-call timeout in tests that withhold an ack.
+// Withheld acks wait for the sender to give up rather than sleeping for a
+// fixed time, so ackTimeout only needs to cover an ordinary call on a busy
+// machine.
+const ackTimeout = 500 * time.Millisecond
+
+// withholdAck blocks until the sender gives up on the request r. The body is
+// drained first: the server only notices a closed connection, and cancels the
+// request context, once the body has been read.
+func withholdAck(r *http.Request) {
+	_, _ = io.Copy(io.Discard, r.Body)
+	<-r.Context().Done()
+}
+
+// slowAck runs the real handler, then withholds the response until the sender
+// times out: the owner accepted the command but the sender cannot know.
+func slowAck(inner http.Handler, slowCalls int) http.Handler {
 	var n atomic.Int32
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := httptest.NewRecorder()
 		inner.ServeHTTP(rec, r)
 		if int(n.Add(1)) <= slowCalls {
-			time.Sleep(delay)
+			withholdAck(r)
 		}
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(rec.Body.Bytes())
@@ -222,7 +236,7 @@ func slowAck(inner http.Handler, delay time.Duration, slowCalls int) http.Handle
 func lostAckSetup(t *testing.T, slowCalls int, ownerLive bool) (*fakeRunner, *fakeRunner, *clusterrpc.Router, *[]string) {
 	remote, local := newFakeRunner(), newFakeRunner()
 	s := &clusterrpc.Server{Token: token, Local: remote, LocalClean: remote, Jobs: jobs{}, JobsHandler: http.NotFoundHandler(), Logger: logging.NewNoopLogger(t), Drain: drain{}}
-	srv := httptest.NewServer(slowAck(s.Handler(), 400*time.Millisecond, slowCalls))
+	srv := httptest.NewServer(slowAck(s.Handler(), slowCalls))
 	t.Cleanup(srv.Close)
 	owner := cluster.Member{Identity: "b", Address: srv.URL}
 	owners := staticOwners{self: "a", owner: owner}
@@ -233,7 +247,7 @@ func lostAckSetup(t *testing.T, slowCalls int, ownerLive bool) (*fakeRunner, *fa
 	r := &clusterrpc.Router{
 		Local: local, LocalClean: local, Owners: owners,
 		Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
-		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: 100 * time.Millisecond,
+		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: ackTimeout,
 		Notify: func(_ models.Repo, _ int, msg string) error { comments = append(comments, msg); return nil },
 	}
 	return remote, local, r, &comments
@@ -407,7 +421,7 @@ func TestRetryReachingDrainingOwnerIsNotRunTwice(t *testing.T) {
 		inner.ServeHTTP(rec, r)
 		if n.Add(1) == 1 {
 			d.on.Store(true)
-			time.Sleep(400 * time.Millisecond)
+			withholdAck(r)
 		}
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(rec.Body.Bytes())
@@ -418,7 +432,7 @@ func TestRetryReachingDrainingOwnerIsNotRunTwice(t *testing.T) {
 		Local: local, LocalClean: local,
 		Owners: staticOwners{self: "a", owner: owner, members: []cluster.Member{{Identity: "a"}, owner}},
 		Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
-		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: 100 * time.Millisecond,
+		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: ackTimeout,
 	}
 
 	r.RunCommentCommandWithContext(context.Background(), repo, nil, nil, models.User{}, 1, &events.CommentCommand{Name: command.Plan})
@@ -434,9 +448,9 @@ func TestRetryReachingDrainingOwnerIsNotRunTwice(t *testing.T) {
 func TestRefusalAfterAmbiguousAttemptStaysAmbiguous(t *testing.T) {
 	local := newFakeRunner()
 	var n atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if n.Add(1) == 1 {
-			time.Sleep(400 * time.Millisecond)
+			withholdAck(r)
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
@@ -449,7 +463,7 @@ func TestRefusalAfterAmbiguousAttemptStaysAmbiguous(t *testing.T) {
 		Local: local, LocalClean: local,
 		Owners: staticOwners{self: "a", owner: owner, members: []cluster.Member{{Identity: "a"}, owner}},
 		Client: &clusterrpc.Client{Token: token, HTTPClient: http.DefaultClient},
-		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: 100 * time.Millisecond,
+		Logger: logging.NewNoopLogger(t), Scope: tally.NoopScope, CallTimeout: ackTimeout,
 		Notify: func(_ models.Repo, _ int, msg string) error { comments = append(comments, msg); return nil },
 	}
 
