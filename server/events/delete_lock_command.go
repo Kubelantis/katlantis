@@ -73,6 +73,17 @@ func (l *DefaultDeleteLockCommand) DeleteLocksByPull(logger logging.SimpleLoggin
 	for i := range numLocks {
 		lock := locks[i]
 
+		// Record the discard in the shared database before touching files.
+		// With several replicas the plan file may live on another replica's
+		// disk, where DeletePlan cannot reach it; the discarded status is
+		// what stops a later apply from using it.
+		if l.Database != nil && lock.Pull.BaseRepo != (models.Repo{}) {
+			if err := l.Database.UpdateProjectStatus(lock.Pull, lock.Workspace, lock.Project.Path, models.DiscardedPlanStatus); err != nil {
+				logger.Warn("Failed to mark plan as discarded: %s", err)
+				return numLocks, err
+			}
+		}
+
 		err := l.WorkingDir.DeletePlan(logger, lock.Pull.BaseRepo, lock.Pull, lock.Workspace, lock.Project.Path, lock.Project.ProjectName)
 		if err != nil {
 			logger.Warn("Failed to delete plan: %s", err)
