@@ -407,6 +407,14 @@ projects:
 
 Project inputs replace the server-side ones field by field.
 
+Repo config is written by pull request authors, so its inputs are limited:
+
+- Environment variable references such as `$NAME` in repo-side `vars`, `var_files`, `backend_config` and `extra_args` are passed to Terraform as written, never expanded from the Atlantis server's environment. Server-side inputs are still expanded.
+- Repo-side `env` cannot set variables that change which programs or plugins run, or Atlantis's own settings: `PATH`, `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_PLUGIN_CACHE_DIR`, `TG_TF_PATH`, `TERRAGRUNT_TFPATH`, or names starting with `LD_`, `DYLD_`, `GIT_`, `ATLANTIS_` or `TF_CLI_ARGS`.
+- Repo-side `extra_args` cannot target `policy_check`, and `extra_args.init` cannot pass `-plugin-dir`.
+
+Set these in server-side `inputs` instead.
+
 ### Removed Keys
 
 Custom workflows were replaced by native inputs and `tool`, and Conftest is the

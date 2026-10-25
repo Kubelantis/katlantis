@@ -587,6 +587,11 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 		if p.Inputs != nil && !slices.Contains(allowedOverrides, InputsKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", InputsKey, AllowedOverridesKey, InputsKey)
 		}
+		if p.Inputs != nil {
+			if err := p.Inputs.ValidateRepoSide(); err != nil {
+				return err
+			}
+		}
 		if p.SilencePRComments != nil {
 			if !slices.Contains(allowedOverrides, SilencePRCommentsKey) {
 				return fmt.Errorf(

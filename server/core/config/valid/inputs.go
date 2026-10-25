@@ -1,6 +1,8 @@
 package valid
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -83,6 +85,36 @@ func (i Inputs) args(stepName string) []string {
 		}
 	}
 	return append(args, i.ExtraArgs[stepName]...)
+}
+
+// repoDeniedEnv are environment variables repo-side inputs may not set. They
+// change which binaries or plugins run, how the CLI is configured, or carry
+// Atlantis's own settings, so setting them would let a pull request undo
+// controls the operator put on the server.
+var repoDeniedEnv = []string{"PATH", "BASH_ENV", "ENV", "TF_CLI_CONFIG_FILE", "TERRAFORM_CONFIG", "TF_PLUGIN_CACHE_DIR", "TG_TF_PATH", "TERRAGRUNT_TFPATH", "NODE_OPTIONS"}
+
+// repoDeniedEnvPrefixes are prefixes of environment variables repo-side
+// inputs may not set; see repoDeniedEnv.
+var repoDeniedEnvPrefixes = []string{"LD_", "DYLD_", "GIT_", "ATLANTIS_", "TF_CLI_ARGS"}
+
+// ValidateRepoSide checks inputs that came from repo config, which pull
+// request authors control. Server-side inputs are trusted and not checked.
+func (i Inputs) ValidateRepoSide() error {
+	for k := range i.Env {
+		name := strings.ToUpper(k)
+		if slices.Contains(repoDeniedEnv, name) || slices.ContainsFunc(repoDeniedEnvPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+			return fmt.Errorf("inputs.env.%s cannot be set in repo config; set it in server-side config instead", k)
+		}
+	}
+	if len(i.ExtraArgs["policy_check"]) > 0 {
+		return errors.New("inputs.extra_args.policy_check cannot be set in repo config; set it in server-side config instead")
+	}
+	for _, arg := range i.ExtraArgs["init"] {
+		if strings.HasPrefix(strings.TrimLeft(arg, "-"), "plugin-dir") {
+			return fmt.Errorf("inputs.extra_args.init cannot pass %q in repo config; set it in server-side config instead", arg)
+		}
+	}
+	return nil
 }
 
 // AllArgs returns every argument the inputs add to any built-in step.
