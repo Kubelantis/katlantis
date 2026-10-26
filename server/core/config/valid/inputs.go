@@ -117,8 +117,16 @@ func (i Inputs) args(stepName string) []string {
 // controls the operator put on the server. HOME, TF_DATA_DIR and the XDG data
 // directories are here because Terraform reads $HOME/.terraformrc and looks
 // for providers in them, which would undo the TF_CLI_CONFIG_FILE and
-// -plugin-dir limits.
-var repoDeniedEnv = []string{"PATH", "BASH_ENV", "ENV", "HOME", "TF_CLI_CONFIG_FILE", "TERRAFORM_CONFIG", "TF_PLUGIN_CACHE_DIR", "TF_DATA_DIR", "XDG_DATA_HOME", "XDG_DATA_DIRS", "TG_TF_PATH", "TERRAGRUNT_TFPATH", "NODE_OPTIONS"}
+// -plugin-dir limits. The proxy and CA variables would let a pull request
+// read provider and cloud API traffic, AWS_CONFIG_FILE and
+// AWS_SHARED_CREDENTIALS_FILE can name a credential_process command, and
+// TF_REATTACH_PROVIDERS points Terraform at an already running provider that
+// receives the provider configuration.
+var repoDeniedEnv = []string{
+	"PATH", "BASH_ENV", "ENV", "HOME", "TF_CLI_CONFIG_FILE", "TERRAFORM_CONFIG", "TF_PLUGIN_CACHE_DIR", "TF_DATA_DIR", "XDG_DATA_HOME", "XDG_DATA_DIRS", "TG_TF_PATH", "TERRAGRUNT_TFPATH", "NODE_OPTIONS",
+	"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+	"AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "TF_REATTACH_PROVIDERS",
+}
 
 // repoDeniedEnvPrefixes are prefixes of environment variables repo-side
 // inputs may not set; see repoDeniedEnv.
