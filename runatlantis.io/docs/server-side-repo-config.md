@@ -254,6 +254,10 @@ repos:
 
 ### Terragrunt
 
+::: warning Experimental
+Terragrunt support, including unit discovery, is experimental: its configuration and behaviour may change in a later release without a deprecation period.
+:::
+
 Set `tool: terragrunt` to run the built-in steps with [Terragrunt](https://terragrunt.gruntwork.io) instead of Terraform. List `tool` in `allowed_overrides` to let projects in `atlantis.yaml` choose.
 
 ```yaml
@@ -298,6 +302,10 @@ Other terragrunt-atlantis-config locals, such as `atlantis_workflow`, are ignore
 
 ### CDK Terrain
 
+::: warning Experimental
+CDK Terrain support, including stack discovery, is experimental: its configuration and behaviour may change in a later release without a deprecation period.
+:::
+
 Set `tool: cdktn` to plan and apply [CDK Terrain](https://github.com/open-constructs/cdk-terrain) apps, the community continuation of CDK for Terraform. A CDK Terrain app is a directory with a `cdktf.json`.
 
 ```yaml
@@ -330,6 +338,10 @@ projects:
 ```
 
 ### Migrating Custom Workflows To Native Inputs
+
+::: warning Experimental
+`atlantis migrate-workflows` is experimental: its configuration and behaviour may change in a later release without a deprecation period.
+:::
 
 `atlantis migrate-workflows` converts custom workflows and custom policy checks into `inputs`, and keeps workflow hooks:
 
