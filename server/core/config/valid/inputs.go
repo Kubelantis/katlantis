@@ -1,6 +1,8 @@
 package valid
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -33,8 +35,14 @@ type Inputs struct {
 // InputsExtraArgsSteps are the built-in steps extra_args may target.
 var InputsExtraArgsSteps = []string{"init", "plan", "apply", "show", "policy_check", "import", "state_rm"}
 
-// Override returns base with every field that is set in o replacing the
-// corresponding field of base. A nil o returns base unchanged.
+// Override returns base with the fields set in o applied on top. VarFiles,
+// Vars and BackendConfig set in o replace those of base. Env is merged by name,
+// o winning. ExtraArgs are merged by step, with the arguments of o appended
+// after those of base, so o cannot remove an argument base passes (such as
+// -plugin-dir). A nil o returns base unchanged.
+//
+// o is repo config, which pull request authors control; base is the
+// operator's server-side config.
 func (base Inputs) Override(o *Inputs) Inputs {
 	if o == nil {
 		return base
@@ -50,10 +58,28 @@ func (base Inputs) Override(o *Inputs) Inputs {
 		out.BackendConfig = o.BackendConfig
 	}
 	if o.Env != nil {
-		out.Env = o.Env
+		out.Env = maps.Clone(base.Env)
+		if out.Env == nil {
+			out.Env = map[string]string{}
+		}
+		maps.Copy(out.Env, o.Env)
 	}
 	if o.ExtraArgs != nil {
-		out.ExtraArgs = o.ExtraArgs
+		out.ExtraArgs = maps.Clone(base.ExtraArgs)
+		if out.ExtraArgs == nil {
+			out.ExtraArgs = map[string][]string{}
+		}
+		for step, args := range o.ExtraArgs {
+			merged := slices.Clone(out.ExtraArgs[step])
+			for _, arg := range args {
+				if !slices.Contains(merged, arg) {
+					merged = append(merged, arg)
+				}
+			}
+			if len(merged) > 0 {
+				out.ExtraArgs[step] = merged
+			}
+		}
 	}
 	return out
 }
@@ -83,6 +109,60 @@ func (i Inputs) args(stepName string) []string {
 		}
 	}
 	return append(args, i.ExtraArgs[stepName]...)
+}
+
+// repoDeniedEnv are environment variables repo-side inputs may not set. They
+// change which binaries or plugins run, how the CLI is configured, or carry
+// Atlantis's own settings, so setting them would let a pull request undo
+// controls the operator put on the server. HOME, TF_DATA_DIR and the XDG data
+// directories are here because Terraform reads $HOME/.terraformrc and looks
+// for providers in them, which would undo the TF_CLI_CONFIG_FILE and
+// -plugin-dir limits. The proxy and CA variables would let a pull request
+// read provider and cloud API traffic, AWS_CONFIG_FILE and
+// AWS_SHARED_CREDENTIALS_FILE can name a credential_process command, and
+// TF_REATTACH_PROVIDERS points Terraform at an already running provider that
+// receives the provider configuration.
+var repoDeniedEnv = []string{
+	"PATH", "BASH_ENV", "ENV", "HOME", "TF_CLI_CONFIG_FILE", "TERRAFORM_CONFIG", "TF_PLUGIN_CACHE_DIR", "TF_DATA_DIR", "XDG_DATA_HOME", "XDG_DATA_DIRS", "TG_TF_PATH", "TERRAGRUNT_TFPATH", "NODE_OPTIONS",
+	"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+	"AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "TF_REATTACH_PROVIDERS",
+}
+
+// repoDeniedEnvPrefixes are prefixes of environment variables repo-side
+// inputs may not set; see repoDeniedEnv.
+var repoDeniedEnvPrefixes = []string{"LD_", "DYLD_", "GIT_", "ATLANTIS_", "TF_CLI_ARGS"}
+
+// ValidateRepoSide checks inputs that came from repo config, which pull
+// request authors control. Server-side inputs are trusted and not checked.
+func (i Inputs) ValidateRepoSide() error {
+	for k := range i.Env {
+		name := strings.ToUpper(k)
+		if slices.Contains(repoDeniedEnv, name) || slices.ContainsFunc(repoDeniedEnvPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+			return fmt.Errorf("inputs.env.%s cannot be set in repo config; set it in server-side config instead", k)
+		}
+	}
+	if _, ok := i.ExtraArgs["policy_check"]; ok {
+		return errors.New("inputs.extra_args.policy_check cannot be set in repo config; set it in server-side config instead")
+	}
+	for _, arg := range i.ExtraArgs["init"] {
+		if strings.HasPrefix(strings.TrimLeft(arg, "-"), "plugin-dir") {
+			return fmt.Errorf("inputs.extra_args.init cannot pass %q in repo config; set it in server-side config instead", arg)
+		}
+	}
+	return nil
+}
+
+// AllArgs returns every argument the inputs add to any built-in step.
+func (i Inputs) AllArgs() []string {
+	var all []string
+	for _, step := range InputsExtraArgsSteps {
+		for _, arg := range i.args(step) {
+			if !slices.Contains(all, arg) {
+				all = append(all, arg)
+			}
+		}
+	}
+	return all
 }
 
 // Apply returns a copy of w whose built-in steps carry the inputs'

@@ -1107,6 +1107,7 @@ func (a *APIController) populatePullRequestStatus(ctx *command.Context) {
 	}
 
 	ctx.PullRequestStatus = status
+	ctx.PullRequestStatusFetched = true
 }
 
 func (a *APIController) populatePullStatus(ctx *command.Context) {

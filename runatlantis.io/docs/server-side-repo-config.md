@@ -216,7 +216,7 @@ projects:
 
 ### Native Inputs
 
-`inputs` configures the built-in steps (`init`, `plan`, `apply` and the others). Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` replace it field by field.
+`inputs` configures the built-in steps (`init`, `plan`, `apply` and the others). Set it on a server-side repo entry as the default, and list `inputs` in `allowed_overrides` to let projects in `atlantis.yaml` override it (see [Repos Can Set Their Own Native Inputs Or Tool](#repos-can-set-their-own-native-inputs-or-tool) for how the two combine).
 
 ```yaml
 repos:
@@ -273,6 +273,8 @@ repos:
 
 When the server-side `tool` of a repo is `terragrunt` and [autodiscovery](repo-level-atlantis-yaml.md#autodiscovery-config) is on (the default when `atlantis.yaml` lists no projects), Atlantis runs `terragrunt find` on each pull request and makes every unit a project. No `atlantis.yaml` or terragrunt-atlantis-config is needed.
 
+`terragrunt find` evaluates the pull request's configuration, including `run_cmd`. When the server-side `plan_requirements` include `approved`, Atlantis does not run it until the pull request is approved, so autoplan on an unapproved pull request reports that approval is needed. Every command that discovers projects checks the approval again when it runs, so dismissing the approval stops discovery, and if Atlantis cannot fetch the pull request's approval from the VCS host the command fails and can be retried. The same applies to CDK Terrain stack discovery.
+
 - A `terragrunt.hcl` that other units include (a parent config) is not a project.
 - A unit autoplans when a file changes in its directory, in a file it reads (included configs, `read_terragrunt_config`, its `terraform.source` module), or in any of those for a unit it depends on through `dependency` or `dependencies` blocks, directly or not.
 - Units plan and apply after the units they depend on, through [execution order groups](repo-level-atlantis-yaml.md#order-of-planning-applying). A unit planned before its dependency is applied uses the dependency's `mock_outputs`; plan it again after the apply.
@@ -311,7 +313,7 @@ repos:
 
 #### CDK Terrain Stack Discovery
 
-When autodiscovery is on, Atlantis finds every `cdktf.json` (outside `node_modules` and `cdktf.out`), synthesizes the app and makes each stack a project:
+When autodiscovery is on, Atlantis finds every `cdktf.json` (outside `node_modules` and `cdktf.out`), synthesizes the app and makes each stack a project. Synthesizing runs the app's code, so with `plan_requirements: [approved]` on the server it waits until the pull request is approved, as for [Terragrunt unit discovery](#terragrunt-unit-discovery).
 
 - The project is named after the stack, prefixed with the app directory unless the app is at the repository root, and plans with `atlantis plan -p <name>`.
 - A stack autoplans when any file of its app changes, except `cdktf.out`, `node_modules` and apps nested inside it.
@@ -405,7 +407,20 @@ projects:
   tool: terragrunt
 ```
 
-Project inputs replace the server-side ones field by field.
+Project inputs combine with the server-side ones:
+
+- `var_files`, `vars` and `backend_config` set in a project replace the server-side value.
+- `env` is merged by name; a project value wins for a name both set.
+- `extra_args` is merged by step. A project's arguments are added after the server-side ones for the same step, so a project cannot remove an argument the server passes.
+
+Repo config is written by pull request authors, so its inputs are limited:
+
+- Repo-side `vars`, `var_files`, `backend_config` and `extra_args` can reference only the Atlantis context variables: `$WORKSPACE`, `$DIR`, `$ATLANTIS_TERRAFORM_VERSION`, `$BASE_REPO_OWNER`, `$BASE_REPO_NAME`, `$REPO_REL_DIR`, `$PROJECT_NAME`, `$PULL_NUM` and `$HEAD_COMMIT` (also written `${NAME}`). Any other reference, such as `$AWS_REGION`, is passed to Terraform as written, never expanded from the Atlantis server's environment. Server-side inputs can reference any environment variable.
+- Repo-side `env` cannot set variables that change which programs or plugins run, or Atlantis's own settings: `PATH`, `BASH_ENV`, `ENV`, `HOME`, `NODE_OPTIONS`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_PLUGIN_CACHE_DIR`, `TF_DATA_DIR`, `XDG_DATA_HOME`, `XDG_DATA_DIRS`, `TG_TF_PATH`, `TERRAGRUNT_TFPATH`, or names starting with `LD_`, `DYLD_`, `GIT_`, `ATLANTIS_` or `TF_CLI_ARGS`. It also cannot set variables that redirect provider traffic or credentials: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` or `TF_REATTACH_PROVIDERS`. Names are matched without regard to case.
+- This list is defence in depth, not a sandbox: `terraform plan` runs code from the pull request, for example through `data "external"`. Require approval before planning (`plan_requirements: [approved]`) and grant `allowed_overrides: [inputs]` only to repos whose authors you trust with the server's credentials.
+- Repo-side `extra_args` cannot set the `policy_check` key, even to an empty list, and `extra_args.init` cannot pass `-plugin-dir`.
+
+Set these in server-side `inputs` instead.
 
 ### Removed Keys
 

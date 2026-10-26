@@ -140,7 +140,7 @@ func MigrateServerConfig(file string, src []byte) (*Result, error) {
 						vals = append(vals, "tool")
 					}
 					mapSet(entry, "allowed_overrides", seqOf(vals))
-					add(loc, Converted, "allowed_overrides: workflow replaced by inputs", "")
+					add(loc, Review, "allowed_overrides: workflow replaced by inputs, which lets repo config set variables, var files, backend config, extra arguments and environment for its projects; keep it only if repo authors should have that control", "")
 				}
 				if slices.Contains(vals, "custom_policy_check") {
 					vals = slices.DeleteFunc(vals, func(v string) bool { return v == "custom_policy_check" })

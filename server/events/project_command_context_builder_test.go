@@ -62,6 +62,7 @@ func TestProjectCommandContextBuilder_PullStatus(t *testing.T) {
 				Status:      models.ErroredPolicyCheckStatus,
 				ProjectName: "project1",
 				RepoRelDir:  "dir1",
+				Workspace:   "default",
 			},
 		}
 
@@ -77,14 +78,66 @@ func TestProjectCommandContextBuilder_PullStatus(t *testing.T) {
 			{
 				Status:     models.ErroredPlanStatus,
 				RepoRelDir: "dir2",
+				Workspace:  "default",
 			},
 			{
 				Status:     models.ErroredPolicyCheckStatus,
-				RepoRelDir: "dir1",
+				RepoRelDir: "./dir1",
+				Workspace:  "default",
 			},
 		}
 
 		result := subject.BuildProjectContext(commandCtx, command.Plan, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Equal(t, models.ErroredPolicyCheckStatus, result[0].ProjectPlanStatus)
+	})
+
+	t.Run("plan and policy status come from the same workspace", func(t *testing.T) {
+		projCfg.Name = ""
+		projCfg.Workspace = "prod"
+		defer func() { projCfg.Workspace = projWorkspace }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, "prod", "", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, "prod", "", false, "")).ThenReturn(expectedApplyCmt)
+		staging := []models.PolicySetStatus{{PolicySetName: "policies", Passed: true}}
+		prod := []models.PolicySetStatus{{PolicySetName: "policies", Passed: false}}
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PassedPolicyCheckStatus, RepoRelDir: "dir1", Workspace: "staging", PolicyStatus: staging},
+			{Status: models.ErroredPolicyCheckStatus, RepoRelDir: "dir1", Workspace: "prod", PolicyStatus: prod},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Equal(t, models.ErroredPolicyCheckStatus, result[0].ProjectPlanStatus)
+		assert.Equal(t, prod, result[0].ProjectPolicyStatus)
+	})
+
+	t.Run("status is not taken from another workspace", func(t *testing.T) {
+		projCfg.Name = ""
+		projCfg.Workspace = "prod"
+		defer func() { projCfg.Workspace = projWorkspace }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, "prod", "", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, "prod", "", false, "")).ThenReturn(expectedApplyCmt)
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PassedPolicyCheckStatus, RepoRelDir: "dir1", Workspace: "staging", PolicyStatus: []models.PolicySetStatus{{PolicySetName: "policies", Passed: true}}},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Equal(t, models.ProjectPlanStatus(0), result[0].ProjectPlanStatus)
+		assert.Nil(t, result[0].ProjectPolicyStatus)
+	})
+
+	t.Run("status comes from the project with the same name in a shared directory", func(t *testing.T) {
+		projCfg.Name = "b"
+		defer func() { projCfg.Name = projName }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, projWorkspace, "b", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, projWorkspace, "b", false, "")).ThenReturn(expectedApplyCmt)
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PassedPolicyCheckStatus, RepoRelDir: "dir1", Workspace: "default", ProjectName: "a"},
+			{Status: models.ErroredPolicyCheckStatus, RepoRelDir: "dir1", Workspace: "default", ProjectName: "b"},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
 
 		assert.Equal(t, models.ErroredPolicyCheckStatus, result[0].ProjectPlanStatus)
 	})
@@ -128,6 +181,39 @@ func TestProjectCommandContextBuilder_PullStatus(t *testing.T) {
 		result := subject.BuildProjectContext(commandCtx, command.Plan, "", projCfg, []string{}, "some/dir", false, false, false, false, true, terraformClient)
 
 		assert.True(t, result[0].AbortOnExecutionOrderFail)
+	})
+
+	t.Run("plan risk comes from the same workspace", func(t *testing.T) {
+		projCfg.Name = ""
+		projCfg.Workspace = "prod"
+		defer func() { projCfg.Workspace = projWorkspace }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, "prod", "", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, "prod", "", false, "")).ThenReturn(expectedApplyCmt)
+		staging := &models.PlanRisk{Tier: models.PlanRiskLow}
+		prod := &models.PlanRisk{Tier: models.PlanRiskCritical}
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PlannedPlanStatus, RepoRelDir: "dir1", Workspace: "staging", PlanRisk: staging},
+			{Status: models.PlannedPlanStatus, RepoRelDir: "dir1", Workspace: "prod", PlanRisk: prod},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Same(t, prod, result[0].ProjectPlanRisk)
+	})
+
+	t.Run("plan risk is not taken from another workspace", func(t *testing.T) {
+		projCfg.Name = ""
+		projCfg.Workspace = "prod"
+		defer func() { projCfg.Workspace = projWorkspace }()
+		When(mockCommentBuilder.BuildPlanComment(projRepoRelDir, "prod", "", []string{})).ThenReturn(expectedPlanCmt)
+		When(mockCommentBuilder.BuildApplyComment(projRepoRelDir, "prod", "", false, "")).ThenReturn(expectedApplyCmt)
+		pullStatus.Projects = []models.ProjectStatus{
+			{Status: models.PlannedPlanStatus, RepoRelDir: "dir1", Workspace: "staging", PlanRisk: &models.PlanRisk{Tier: models.PlanRiskLow}},
+		}
+
+		result := subject.BuildProjectContext(commandCtx, command.Apply, "", projCfg, []string{}, "some/dir", false, false, false, false, false, terraformClient)
+
+		assert.Nil(t, result[0].ProjectPlanRisk)
 	})
 }
 

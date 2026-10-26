@@ -68,6 +68,10 @@ type ProjectContext struct {
 	// the Terraform client. ProjectContext is passed by value, so this does not
 	// leak between steps.
 	ExpandableArgs []string
+	// LiteralArgs are arguments that came from repo-side inputs. Like comment
+	// args, they are never expanded, even when a step runner marks them
+	// expandable.
+	LiteralArgs []string
 	// CommentArgs are the extra arguments that were added to the atlantis
 	// command, ex. atlantis plan -- -target=resource, exactly as the user wrote
 	// them. Use these when building an argument vector for a command Atlantis
@@ -312,7 +316,13 @@ func (p ProjectContext) Ctx() context.Context {
 // to the pull request context resolved.
 func (p ProjectContext) InputsEnv() map[string]string {
 	inputs := valid.Inputs{Env: p.Env}
-	return inputs.ExpandEnv(map[string]string{
+	return inputs.ExpandEnv(p.ContextVars())
+}
+
+// ContextVars returns the pull request context values inputs may reference;
+// see valid.InputsContextVars.
+func (p ProjectContext) ContextVars() map[string]string {
+	return map[string]string{
 		"BASE_REPO_OWNER": p.BaseRepo.Owner,
 		"BASE_REPO_NAME":  p.BaseRepo.Name,
 		"REPO_REL_DIR":    p.RepoRelDir,
@@ -320,5 +330,5 @@ func (p ProjectContext) InputsEnv() map[string]string {
 		"PROJECT_NAME":    p.ProjectName,
 		"PULL_NUM":        strconv.Itoa(p.Pull.Num),
 		"HEAD_COMMIT":     p.Pull.HeadCommit,
-	})
+	}
 }

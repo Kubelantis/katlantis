@@ -3,6 +3,7 @@
 package dbtest
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -224,7 +225,7 @@ func Run(t *testing.T, newDB Factory) {
 		Equals(t, status.Projects, got.Projects)
 		Equals(t, pull.HeadCommit, got.Pull.HeadCommit)
 
-		Ok(t, d.UpdateProjectStatus(pull, "default", ".", models.AppliedPlanStatus))
+		Ok(t, d.UpdateProjectStatus(pull, "default", ".", "", models.AppliedPlanStatus))
 		got, err = d.GetPullStatus(pull)
 		Ok(t, err)
 		Equals(t, models.AppliedPlanStatus, got.Projects[0].Status)
@@ -256,6 +257,35 @@ func Run(t *testing.T, newDB Factory) {
 		status, err := d.UpdatePullWithResults(newPull(1, "sha2"), []command.ProjectResult{planResult(".", "default", "", false)})
 		Ok(t, err)
 		Equals(t, "alice", status.Projects[0].PolicyStatus[0].Approvals[0].Approver)
+	})
+
+	t.Run("update project status matches the exact project", func(t *testing.T) {
+		d := newDB(t)
+		pull := newPull(4, "sha1")
+		_, err := d.UpdatePullWithResults(pull, []command.ProjectResult{
+			planResult("mod", "default", "a", false),
+			planResult("mod", "default", "b", false),
+			planResult("mod", "staging", "b", false),
+		})
+		Ok(t, err)
+
+		Ok(t, d.UpdateProjectStatus(pull, "default", "./mod", "b", models.DiscardedPlanStatus))
+		got, err := d.GetPullStatus(pull)
+		Ok(t, err)
+		statuses := map[string]models.ProjectPlanStatus{}
+		for _, p := range got.Projects {
+			statuses[p.Workspace+"/"+p.ProjectName] = p.Status
+		}
+		Equals(t, map[string]models.ProjectPlanStatus{
+			"default/a": models.PlannedPlanStatus,
+			"default/b": models.DiscardedPlanStatus,
+			"staging/b": models.PlannedPlanStatus,
+		}, statuses)
+
+		err = d.UpdateProjectStatus(pull, "default", "mod", "c", models.DiscardedPlanStatus)
+		Assert(t, errors.Is(err, db.ErrProjectNotFound), "expected ErrProjectNotFound, got %v", err)
+		err = d.UpdateProjectStatus(newPull(5, "sha1"), "default", "mod", "a", models.DiscardedPlanStatus)
+		Assert(t, errors.Is(err, db.ErrProjectNotFound), "expected ErrProjectNotFound for a pull with no status, got %v", err)
 	})
 
 	t.Run("pull status persists plan risk", func(t *testing.T) {

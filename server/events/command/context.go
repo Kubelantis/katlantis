@@ -41,6 +41,9 @@ type Context struct {
 
 	// Current PR state
 	PullRequestStatus models.PullReqStatus
+	// PullRequestStatusFetched is true once PullRequestStatus has been read
+	// from the VCS for this command; until then it holds zero values.
+	PullRequestStatusFetched bool
 
 	PullStatus *models.PullStatus
 

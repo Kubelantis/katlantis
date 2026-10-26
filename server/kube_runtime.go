@@ -182,6 +182,8 @@ type kubeDeps struct {
 	// SharedPlans is true when plans are in an external store.
 	SharedPlans    bool
 	PlanHolderWait time.Duration
+	// Drainer makes shutdown wait for commands that are being routed.
+	Drainer *events.Drainer
 }
 
 // wire connects the cluster runtime to the server: it returns the router
@@ -196,6 +198,9 @@ func (k *kubeRuntime) wire(d kubeDeps) *clusterrpc.Router {
 		Notify: func(repo models.Repo, pullNum int, msg string) error {
 			return d.VCSClient.CreateComment(k.logger, repo, pullNum, msg, "")
 		},
+	}
+	if d.Drainer != nil {
+		router.Drain = d.Drainer
 	}
 	// Closing a pull also removes the copies other replicas hold.
 	d.PullClosedExecutor.Peers = router

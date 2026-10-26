@@ -72,6 +72,17 @@ func (s *Server) firstDelivery(id string) bool {
 	return true
 }
 
+// delivered reports whether id was already accepted, without recording it.
+func (s *Server) delivered(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.seenMu.Lock()
+	defer s.seenMu.Unlock()
+	t, ok := s.seen[id]
+	return ok && time.Since(t) <= seenTTL
+}
+
 // Handler returns the internal HTTP handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -111,14 +122,20 @@ func traceContext(r *http.Request) context.Context {
 }
 
 func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
-	if s.Drain != nil && s.Drain.GetStatus().ShuttingDown {
-		// The sender falls back to running the command itself.
-		http.Error(w, "shutting down", http.StatusServiceUnavailable)
-		return
-	}
 	var req commandRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.Drain != nil && s.Drain.GetStatus().ShuttingDown {
+		if s.delivered(req.RequestID) {
+			// A retry of a request accepted before draining started: refusing
+			// it would make the sender run the command a second time.
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		// The sender falls back to running the command itself.
+		http.Error(w, "shutting down", http.StatusServiceUnavailable)
 		return
 	}
 	if !s.firstDelivery(req.RequestID) {

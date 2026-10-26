@@ -195,7 +195,10 @@ workflows:
 	Equals(t, []string{"prod.tfvars"}, in.VarFiles)
 	Equals(t, []string{"-upgrade"}, in.ExtraArgs["init"])
 	Equals(t, 0, len(notesWith(r.Notes, migrate.Removed)))
-	Equals(t, 0, len(notesWith(r.Notes, migrate.Review)))
+	// Granting the inputs override is a permission change the operator must review.
+	review := notesWith(r.Notes, migrate.Review)
+	Equals(t, 1, len(review))
+	Assert(t, strings.Contains(review[0].Detail, "allowed_overrides: workflow replaced by inputs"), "review note: %+v", review[0])
 
 	out := string(r.Output)
 	for _, want := range []string{"tool: terragrunt", "allowed_overrides: [inputs, tool]", "var_files: [prod.tfvars]"} {

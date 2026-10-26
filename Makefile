@@ -125,6 +125,7 @@ website-dev: ## Run runatlantic.io on localhost:8080
 
 ENVTEST_K8S_VERSION ?= 1.37.0
 ENVTEST_DIR ?= $(HOME)/.local/envtest
+TEST_KUBE_FLAGS ?=
 
 .PHONY: envtest
 envtest: ## Install kube-apiserver/etcd binaries for Kubernetes integration tests
@@ -133,7 +134,7 @@ envtest: ## Install kube-apiserver/etcd binaries for Kubernetes integration test
 .PHONY: test-kube
 test-kube: ## Run Kubernetes-native backend tests against a real API server
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_DIR) -p path)" \
-		go test ./server/core/kube/... ./server/core/db/... ./server/clusterrpc/...
+		go test $(TEST_KUBE_FLAGS) ./server/core/kube/... ./server/core/db/... ./server/clusterrpc/...
 
 .PHONY: generate-crds
 generate-crds: ## Regenerate CRD manifests and deepcopy code

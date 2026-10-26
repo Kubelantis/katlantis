@@ -2790,7 +2790,7 @@ func TestRunApply_DiscardedProjects(t *testing.T) {
 		},
 	})
 	Ok(t, err)
-	Ok(t, testDB.UpdateProjectStatus(pull, "default", ".", models.DiscardedPlanStatus))
+	Ok(t, testDB.UpdateProjectStatus(pull, "default", ".", "", models.DiscardedPlanStatus))
 	ghPull := &github.PullRequest{
 		State: github.Ptr("open"),
 	}

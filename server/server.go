@@ -718,6 +718,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	pullClosedExecutor := events.NewInstrumentedPullClosedExecutor(statsScope, logger, basePullClosedExecutor)
 
 	projectFinder := &events.DefaultProjectFinder{}
+	pullReqStatusFetcher := vcs.NewPullReqStatusFetcher(vcsClient, userConfig.VCSStatusName, strings.Split(userConfig.IgnoreVCSStatusNames, ","))
 	projectCommandBuilder := events.NewInstrumentedProjectCommandBuilder(
 		logger,
 		policyChecksEnabled,
@@ -745,6 +746,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		terraformClient,
 		planStore,
 		userConfig.SharePlanDir,
+		pullReqStatusFetcher,
 	)
 
 	showStepRunner, err := runtime.NewShowStepRunner(terraformClient, defaultTfDistribution, defaultTfVersion)
@@ -869,7 +871,6 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		userConfig.QuietPolicyChecks,
 	)
 
-	pullReqStatusFetcher := vcs.NewPullReqStatusFetcher(vcsClient, userConfig.VCSStatusName, strings.Split(userConfig.IgnoreVCSStatusNames, ","))
 	planCommandRunner := events.NewPlanCommandRunner(
 		userConfig.SilenceVCSStatusNoPlans,
 		userConfig.SilenceVCSStatusNoProjects,
@@ -1119,6 +1120,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		JobLogDir:           jobLogDir(userConfig),
 		SharedPlans:         externalPlanStore(userConfig, globalCfg),
 		PlanHolderWait:      time.Duration(userConfig.ClusterPlanHolderWaitSeconds) * time.Second,
+		Drainer:             drainer,
 	})
 	eventsController := &events_controllers.VCSEventsController{
 		CommandRunner:                   clusterRouter,

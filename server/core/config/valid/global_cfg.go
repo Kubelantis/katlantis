@@ -155,6 +155,10 @@ type MergedProjectCfg struct {
 	SilencePRComments         []string
 	// Env is set for every step of the project (from inputs).
 	Env map[string]string
+	// LiteralArgs are the step arguments that came from repo-side inputs.
+	// They are passed literally: unlike server-side arguments, environment
+	// variable references in them are never expanded.
+	LiteralArgs []string
 	// Tool runs the built-in steps; see Tools.
 	Tool string
 	// Stack is the CDK Terrain stack, for tool cdktn.
@@ -411,9 +415,11 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		tool = *proj.Tool
 	}
 	inputs := g.matchingInputs(repoID)
+	var literalArgs []string
 	if slices.Contains(allowedOverrides, InputsKey) && proj.Inputs != nil {
 		log.Debug("overriding server-defined %s with repo settings", InputsKey)
 		inputs = inputs.Override(proj.Inputs)
+		literalArgs = proj.Inputs.AllArgs()
 	}
 	workflow := inputs.Apply(NativeWorkflow())
 
@@ -449,6 +455,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		PolicyCheck:               policyCheck,
 		SilencePRComments:         silencePRComments,
 		Env:                       inputs.Env,
+		LiteralArgs:               literalArgs,
 		Tool:                      tool,
 		Stack:                     proj.Stack,
 	}
@@ -518,6 +525,13 @@ func (g GlobalCfg) RepoTool(repoID string) string {
 	return tool
 }
 
+// RepoPlanRequirements returns the server-side plan requirements for repoID,
+// before any repo config override.
+func (g GlobalCfg) RepoPlanRequirements(log logging.SimpleLogging, repoID string) []string {
+	planReqs, _, _, _, _, _, _, _, _ := g.getMatchingCfg(log, repoID)
+	return planReqs
+}
+
 // matchingInputs returns the inputs of the last server-side repo entry that
 // matches repoID and sets inputs, like the other repo settings.
 func (g GlobalCfg) matchingInputs(repoID string) Inputs {
@@ -579,6 +593,11 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 		}
 		if p.Inputs != nil && !slices.Contains(allowedOverrides, InputsKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", InputsKey, AllowedOverridesKey, InputsKey)
+		}
+		if p.Inputs != nil {
+			if err := p.Inputs.ValidateRepoSide(); err != nil {
+				return err
+			}
 		}
 		if p.SilencePRComments != nil {
 			if !slices.Contains(allowedOverrides, SilencePRCommentsKey) {

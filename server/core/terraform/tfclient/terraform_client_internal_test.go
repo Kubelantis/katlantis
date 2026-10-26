@@ -608,6 +608,40 @@ func TestDefaultClient_RunCommandAsync_ExpandsCustomEnvVars(t *testing.T) {
 	Equals(t, "plan -var-file staging.tfvars", out)
 }
 
+// Arguments from repo-side inputs come from the pull request author, so their
+// environment variable references must reach the process literally even though
+// the step runner marks every extra argument expandable.
+func TestDefaultClient_RunCommandWithVersion_RepoInputArgsStayLiteral(t *testing.T) {
+	v, err := version.NewVersion("0.11.11")
+	Ok(t, err)
+	tmp := t.TempDir()
+	t.Setenv("ATLANTIS_TEST_SECRET", "s3cr3t-value")
+	ctx := command.ProjectContext{
+		Log:        logging.NewNoopLogger(t),
+		Workspace:  "default",
+		RepoRelDir: ".",
+		User:       models.User{Username: "username"},
+		Pull:       models.PullRequest{Num: 2},
+		BaseRepo:   models.Repo{FullName: "owner/repo", Owner: "owner", Name: "repo"},
+	}
+	client := &DefaultClient{
+		defaultVersion:          v,
+		terraformPluginCacheDir: tmp,
+		overrideTF:              "echo",
+		projectCmdOutputHandler: jobmocks.NewMockProjectCommandOutputHandler(),
+	}
+	distribution := terraform.NewDistributionTerraformWithDownloader(terraform_mocks.NewMockDownloader())
+
+	ctx.ExpandableArgs = []string{"-var", "t=$ATLANTIS_TEST_SECRET", "-var-file", "$CUSTOM_TFVARS", "-var=w=$WORKSPACE-$BASE_REPO_NAME"}
+	ctx.LiteralArgs = []string{"-var", "t=$ATLANTIS_TEST_SECRET", "-var=w=$WORKSPACE-$BASE_REPO_NAME"}
+	out, err := client.RunCommandWithVersion(ctx, tmp, []string{"-var", "t=$ATLANTIS_TEST_SECRET", "-var-file", "$CUSTOM_TFVARS", "-var=w=$WORKSPACE-$BASE_REPO_NAME"},
+		map[string]string{"CUSTOM_TFVARS": "staging.tfvars"}, distribution, nil, "default")
+
+	Ok(t, err)
+	// Context variables such as $WORKSPACE still expand in repo arguments.
+	Equals(t, "-var t=$ATLANTIS_TEST_SECRET -var-file staging.tfvars -var=w=default-repo\n", out)
+}
+
 // The argv Atlantis executes has environment variables expanded, but the string
 // Atlantis logs and puts in failing pull request comments must not: an
 // extra_args entry may reference a variable holding a credential.
@@ -620,7 +654,7 @@ func TestDefaultClient_PrepCmd_DisplayKeepsVariablesUnexpanded(t *testing.T) {
 	argv, display, _, err := client.prepCmd(log, nil, v, "default", "/tmp",
 		[]string{"plan", "-var=token=$TF_SECRET"},
 		map[string]string{"TF_SECRET": "s3cr3t-value"},
-		[]string{"-var=token=$TF_SECRET"}, nil, "")
+		argSources{expandable: []string{"-var=token=$TF_SECRET"}}, "")
 	Ok(t, err)
 
 	// The process still receives the expanded value.
@@ -647,7 +681,7 @@ func TestDefaultClient_PrepCmd_PathWithSpaceIsASingleArgument(t *testing.T) {
 	planPath := "/data/repos/bitbucket owner/repo/2/default/default.tfplan"
 
 	argv, _, _, err := client.prepCmd(log, nil, v, "default", "/tmp",
-		[]string{"plan", "-out", planPath}, nil, nil, nil, "")
+		[]string{"plan", "-out", planPath}, nil, argSources{}, "")
 
 	Ok(t, err)
 	Equals(t, []string{"echo", "plan", "-out", planPath}, argv)
@@ -670,7 +704,7 @@ func TestDefaultClient_PrepCmd_DoesNotExpandCommentArgs(t *testing.T) {
 	args := append([]string{"plan"}, commentArgs...)
 
 	// No expandable args: everything is literal.
-	argv, display, _, err := client.prepCmd(log, nil, v, "default", "/tmp", args, nil, nil, commentArgs, "")
+	argv, display, _, err := client.prepCmd(log, nil, v, "default", "/tmp", args, nil, argSources{comment: commentArgs}, "")
 	Ok(t, err)
 	Assert(t, !strings.Contains(strings.Join(argv, " "), "ghp_CANARY_SECRET_VALUE"),
 		"comment arg was expanded into the argv: %q", argv)
@@ -679,7 +713,7 @@ func TestDefaultClient_PrepCmd_DoesNotExpandCommentArgs(t *testing.T) {
 
 	// Even when an operator's extra_args happens to be the same string, the
 	// comment copy is not expanded.
-	argv, _, _, err = client.prepCmd(log, nil, v, "default", "/tmp", args, nil, commentArgs, commentArgs, "")
+	argv, _, _, err = client.prepCmd(log, nil, v, "default", "/tmp", args, nil, argSources{expandable: commentArgs, comment: commentArgs}, "")
 	Ok(t, err)
 	Assert(t, !strings.Contains(strings.Join(argv, " "), "ghp_CANARY_SECRET_VALUE"),
 		"comment arg was expanded when replayed as an extra_arg: %q", argv)
@@ -695,7 +729,7 @@ func TestDefaultClient_PrepCmd_ExpandsConfiguredExtraArgs(t *testing.T) {
 	extraArgs := []string{"-var-file=$WORKSPACE.tfvars"}
 	args := append([]string{"plan"}, extraArgs...)
 
-	argv, display, _, err := client.prepCmd(log, nil, v, "staging", "/tmp", args, nil, extraArgs, nil, "")
+	argv, display, _, err := client.prepCmd(log, nil, v, "staging", "/tmp", args, nil, argSources{expandable: extraArgs}, "")
 
 	Ok(t, err)
 	Equals(t, []string{"echo", "plan", "-var-file=staging.tfvars"}, argv)
@@ -703,6 +737,44 @@ func TestDefaultClient_PrepCmd_ExpandsConfiguredExtraArgs(t *testing.T) {
 	// not reach the logs or a pull request comment.
 	Assert(t, strings.Contains(display, "$WORKSPACE"),
 		"display should keep the unexpanded reference, got %q", display)
+}
+
+// Repo-side input arguments may reference the Atlantis context variables, as
+// extra_args always could, but never the Atlantis process environment.
+func TestDefaultClient_PrepCmd_RepoArgsExpandOnlyContextVars(t *testing.T) {
+	t.Setenv("ATLANTIS_GH_TOKEN", "ghp_CANARY_SECRET_VALUE")
+	v, err := version.NewVersion("0.11.11")
+	Ok(t, err)
+	client := &DefaultClient{defaultVersion: v, overrideTF: "echo"}
+
+	repoArgs := []string{"-var-file=$WORKSPACE.tfvars", "-var=dir=${DIR}", "-var=project=$PROJECT_NAME", "-var=token=$ATLANTIS_GH_TOKEN", "-var=x=${ATLANTIS_GH_TOKEN}"}
+	args := append([]string{"plan"}, repoArgs...)
+	argv, display, _, err := client.prepCmd(logging.NewNoopLogger(t), nil, v, "staging", "/repo/mod", args,
+		map[string]string{"WORKSPACE": "from-env"},
+		argSources{repo: repoArgs, context: map[string]string{"PROJECT_NAME": "app", "WORKSPACE": "staging"}}, "")
+	Ok(t, err)
+	Equals(t, []string{"echo", "plan", "-var-file=staging.tfvars", "-var=dir=/repo/mod", "-var=project=app", "-var=token=$ATLANTIS_GH_TOKEN", "-var=x=${ATLANTIS_GH_TOKEN}"}, argv)
+	Assert(t, strings.Contains(display, "$WORKSPACE"), "display should keep the unexpanded reference, got %q", display)
+}
+
+// A repo argument that repeats an operator argument, or a comment argument
+// that repeats a repo argument, gets the more restrictive treatment.
+func TestDefaultClient_PrepCmd_SharedArgsGetTheStricterExpansion(t *testing.T) {
+	t.Setenv("ATLANTIS_GH_TOKEN", "ghp_CANARY_SECRET_VALUE")
+	v, err := version.NewVersion("0.11.11")
+	Ok(t, err)
+	client := &DefaultClient{defaultVersion: v, overrideTF: "echo"}
+
+	shared := "-var=t=$ATLANTIS_GH_TOKEN-$WORKSPACE"
+	argv, _, _, err := client.prepCmd(logging.NewNoopLogger(t), nil, v, "staging", "/tmp", []string{"plan", shared}, nil,
+		argSources{expandable: []string{shared}, repo: []string{shared}}, "")
+	Ok(t, err)
+	Equals(t, []string{"echo", "plan", "-var=t=$ATLANTIS_GH_TOKEN-staging"}, argv)
+
+	argv, _, _, err = client.prepCmd(logging.NewNoopLogger(t), nil, v, "staging", "/tmp", []string{"plan", shared}, nil,
+		argSources{expandable: []string{shared}, repo: []string{shared}, comment: []string{shared}}, "")
+	Ok(t, err)
+	Equals(t, []string{"echo", "plan", shared}, argv)
 }
 
 // A Terragrunt project runs terragrunt with the same arguments, pointed at the
@@ -715,7 +787,7 @@ func TestDefaultClient_PrepCmd_Terragrunt(t *testing.T) {
 	client := &DefaultClient{defaultVersion: v, overrideTF: "/bin/terraform", overrideTerragrunt: "/bin/terragrunt"}
 
 	argv, display, env, err := client.prepCmd(log, nil, v, "default", "/tmp",
-		[]string{"plan", "-input=false"}, map[string]string{"TG_LOG_LEVEL": "debug"}, nil, nil, valid.ToolTerragrunt)
+		[]string{"plan", "-input=false"}, map[string]string{"TG_LOG_LEVEL": "debug"}, argSources{}, valid.ToolTerragrunt)
 	Ok(t, err)
 	Equals(t, []string{"/bin/terragrunt", "run", "--", "plan", "-input=false"}, argv)
 	Assert(t, strings.HasPrefix(display, "/bin/terragrunt run -- plan"), "display should show terragrunt, got %q", display)
@@ -731,7 +803,7 @@ func TestDefaultClient_PrepCmd_Terragrunt(t *testing.T) {
 	Equals(t, "TG_LOG_LEVEL=debug", last)
 
 	// Terraform projects are unchanged.
-	argv, _, env, err = client.prepCmd(log, nil, v, "default", "/tmp", []string{"plan"}, nil, nil, nil, valid.ToolTerraform)
+	argv, _, env, err = client.prepCmd(log, nil, v, "default", "/tmp", []string{"plan"}, nil, argSources{}, valid.ToolTerraform)
 	Ok(t, err)
 	Equals(t, []string{"/bin/terraform", "plan"}, argv)
 	Assert(t, !slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "TG_TF_PATH=") }), "terraform project got Terragrunt env: %v", env)
@@ -742,6 +814,6 @@ func TestDefaultClient_PrepCmd_TerragruntMissing(t *testing.T) {
 	v, err := version.NewVersion("0.11.11")
 	Ok(t, err)
 	client := &DefaultClient{defaultVersion: v, overrideTF: "/bin/terraform"}
-	_, _, _, err = client.prepCmd(logging.NewNoopLogger(t), nil, v, "default", "/tmp", []string{"plan"}, nil, nil, nil, valid.ToolTerragrunt)
+	_, _, _, err = client.prepCmd(logging.NewNoopLogger(t), nil, v, "default", "/tmp", []string{"plan"}, nil, argSources{}, valid.ToolTerragrunt)
 	Assert(t, errors.Is(err, errTerragruntMissing), "expected errTerragruntMissing, got %v", err)
 }

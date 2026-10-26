@@ -60,6 +60,33 @@ func TestInputsOverrideReplacesSetFields(t *testing.T) {
 	Equals(t, server, server.Override(nil))
 }
 
+func TestInputsOverrideMergesEnvByName(t *testing.T) {
+	server := valid.Inputs{Env: map[string]string{"A": "server", "B": "server"}}
+	got := server.Override(&valid.Inputs{Env: map[string]string{"B": "repo", "C": "repo"}})
+	Equals(t, map[string]string{"A": "server", "B": "repo", "C": "repo"}, got.Env)
+	Equals(t, map[string]string{"A": "server", "B": "server"}, server.Env) // base is not modified
+}
+
+func TestInputsOverrideKeepsServerExtraArgs(t *testing.T) {
+	server := valid.Inputs{ExtraArgs: map[string][]string{
+		"init":         {"-plugin-dir=/opt/plugins"},
+		"plan":         {"-lock-timeout=5m"},
+		"policy_check": {"--all-namespaces"},
+	}}
+	got := server.Override(&valid.Inputs{ExtraArgs: map[string][]string{
+		"init": {"-upgrade"},
+		"plan": {"-refresh=false", "-lock-timeout=5m"},
+		"show": {"-no-color"},
+	}})
+	Equals(t, map[string][]string{
+		"init":         {"-plugin-dir=/opt/plugins", "-upgrade"},
+		"plan":         {"-lock-timeout=5m", "-refresh=false"},
+		"show":         {"-no-color"},
+		"policy_check": {"--all-namespaces"},
+	}, got.ExtraArgs)
+	Equals(t, []string{"-plugin-dir=/opt/plugins"}, server.ExtraArgs["init"]) // base is not modified
+}
+
 func TestExpandEnvResolvesContext(t *testing.T) {
 	in := valid.Inputs{Env: map[string]string{
 		"TF_AWS_DEFAULT_TAGS_repository": "github.com/${BASE_REPO_OWNER}/${BASE_REPO_NAME}",
