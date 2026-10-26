@@ -3,10 +3,13 @@ package migrate
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/runatlantis/atlantis/server/core/config/valid"
 )
 
 // Result is a migrated file and what happened to it.
@@ -217,6 +220,7 @@ func MigrateRepoConfig(file string, src []byte, server map[string]Inputs) (*Resu
 				case in.hasInputs() && mapGet(p, "inputs") != nil:
 					add(loc, Review, fmt.Sprintf("already has inputs; workflow %q was not merged into them", name))
 				case !in.IsZero():
+					in = repoSafe(in, func(detail string) { add(loc, Removed, detail) })
 					in.applyTo(p)
 					add(loc, Converted, fmt.Sprintf("workflow %q replaced by %s", name, in.describe()))
 				default:
@@ -235,4 +239,39 @@ func MigrateRepoConfig(file string, src []byte, server map[string]Inputs) (*Resu
 		return nil, err
 	}
 	return r, nil
+}
+
+// repoSafe returns in without the env names and arguments that repo config
+// may not set, calling removed for each. The server would reject them in
+// atlantis.yaml, so they must move to server-side inputs. The checks are the
+// server's own, so the two cannot drift apart.
+func repoSafe(in Inputs, removed func(detail string)) Inputs {
+	env := map[string]string{}
+	for _, k := range slices.Sorted(maps.Keys(in.Env)) {
+		if err := (valid.Inputs{Env: map[string]string{k: in.Env[k]}}).ValidateRepoSide(); err != nil {
+			removed(err.Error())
+			continue
+		}
+		env[k] = in.Env[k]
+	}
+	in.Env = nilIfEmpty(env)
+	extra := map[string][]string{}
+	for _, step := range slices.Sorted(maps.Keys(in.ExtraArgs)) {
+		var kept []string
+		for _, arg := range in.ExtraArgs[step] {
+			if err := (valid.Inputs{ExtraArgs: map[string][]string{step: {arg}}}).ValidateRepoSide(); err != nil {
+				removed(err.Error())
+				continue
+			}
+			kept = append(kept, arg)
+		}
+		if len(kept) > 0 {
+			extra[step] = kept
+		}
+	}
+	in.ExtraArgs = nil
+	if len(extra) > 0 {
+		in.ExtraArgs = extra
+	}
+	return in
 }

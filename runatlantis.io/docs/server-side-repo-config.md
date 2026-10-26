@@ -345,6 +345,7 @@ atlantis migrate-workflows --repos-yaml repos.yaml --atlantis-yaml atlantis.yaml
 - `tofu ...` commands become built-in steps with `terraform_distribution: opentofu`, and so does Terragrunt pointed at `tofu` (`TG_TF_PATH` / `TERRAGRUNT_TFPATH`).
 - Other custom commands, `multienv` and `custom_policy_check` are removed and listed in the report. Commands that must run in Atlantis's clone of the pull request, such as decrypting secrets, rendering backend files or running Infracost on the plan, belong in server-side [pre-workflow](pre-workflow-hooks.md) or [post-workflow](post-workflow-hooks.md) hooks, which the tool keeps. With a TypeSafe API key (`ATLANTIS_TYPESAFE_API_KEY`), Jev labels each removed command (wrapper tool, policy scanner, cost estimation, credentials, ...) so the report says what replaces it. Labels below 0.8 confidence are marked uncertain. Labels never change the converted files.
 - A server-side workflow named `default` becomes a first catch-all repo entry with inputs.
+- In `atlantis.yaml`, env names and arguments that repo config cannot set (see [the repo-side limits](#repos-can-set-their-own-native-inputs-or-tool)) are left out and reported as removed; set them in server-side `inputs` instead.
 - `--write` keeps the originals as `.orig`; `--strict` exits non-zero if anything was removed or needs review.
 
 ### Running Scripts Before Atlantis Workflows
