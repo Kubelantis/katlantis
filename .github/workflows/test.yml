@@ -64,9 +64,6 @@ jobs:
     if: needs.changes.outputs.should-run-tests == 'true'
     name: Tests
     runs-on: ubuntu-24.04
-    # Use latest testing environment for automatic updates
-    # Previous: ghcr.io/runatlantis/testing-env:latest@sha256:725981e9090c977f8055f5ec5ba7a63430a8f0337ab955978e6b8cc2cd0236c3
-    container: ghcr.io/runatlantis/testing-env:latest@sha256:dc683c36e7fb8f26fcc8628fdcf328f42d3b1903e130aebb8484223fbdedfd98
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -80,7 +77,22 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - run: make test-all
+      # The upstream ghcr.io/runatlantis/testing-env image has no OpenTofu,
+      # Terragrunt or CDK Terrain, which this fork's end-to-end tests need,
+      # so build the testing image from testing/Dockerfile and test in it.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build testing image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: testing
+          load: true
+          tags: katlantis-testing-env:ci
+          cache-from: type=gha,scope=testing-env
+          cache-to: type=gha,mode=max,scope=testing-env
+
+      - name: make test-all
+        run: docker run --rm -v "$PWD:/atlantis" -w /atlantis katlantis-testing-env:ci make test-all
       - run: make check-fmt
       - run: make check-go-toolchain
 
