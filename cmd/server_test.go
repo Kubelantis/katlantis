@@ -1342,6 +1342,14 @@ func TestExecute_RemovedFlagsFail(t *testing.T) {
 	Ok(t, c.Execute())
 }
 
+// Kubernetes sets ATLANTIS_REDIS_PORT=tcp://... in every pod when the
+// namespace has a Service named atlantis-redis; that must not stop startup.
+func TestExecute_RemovedFlagsIgnoreServiceLinks(t *testing.T) {
+	t.Setenv("ATLANTIS_REDIS_PORT", "tcp://10.0.0.1:6379")
+	c := setupWithDefaults(map[string]any{}, t)
+	Ok(t, c.Execute())
+}
+
 func TestExecute_ValidateLanguage(t *testing.T) {
 	cases := []struct {
 		description string

@@ -956,14 +956,20 @@ func (s *ServerCmd) Init() *cobra.Command {
 
 // removedFlagsError reports settings of flags this server no longer has.
 // --locking-db-type=kubernetes describes what the server does anyway, so it
-// is accepted.
+// is accepted. Service link variables are ignored as in
+// sanitizeKubernetesServiceLinks: a Service named "atlantis-redis" gives
+// every pod ATLANTIS_REDIS_PORT=tcp://..., which nobody set for Atlantis.
 func (s *ServerCmd) removedFlagsError() error {
 	var set []string
 	for _, name := range slices.Sorted(maps.Keys(removedFlags)) {
 		if !s.Viper.IsSet(name) {
 			continue
 		}
-		if name == "locking-db-type" && s.Viper.GetString(name) == "kubernetes" {
+		val := s.Viper.GetString(name)
+		if name == "locking-db-type" && val == "kubernetes" {
+			continue
+		}
+		if strings.HasPrefix(val, "tcp://") || strings.HasPrefix(val, "udp://") {
 			continue
 		}
 		set = append(set, "--"+name)
