@@ -8,6 +8,8 @@ Architecture Decision Records (ADRs) preserve important design choices and their
 | --- | --- | --- |
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-api-enhancement-drift-detection.md) | API Enhancement and Drift Detection | Proposed |
+| [0003](0003-kubernetes-native-ha.md) | Kubernetes-native high availability | Accepted (fork `k8s-native`) |
+| [0004](0004-separate-backend-config-override.md) | Separate override for repo-side backend_config | Proposed |
 
 Update this table when adding or changing an ADR.
 
