@@ -220,7 +220,13 @@ func MigrateRepoConfig(file string, src []byte, server map[string]Inputs) (*Resu
 				case in.hasInputs() && mapGet(p, "inputs") != nil:
 					add(loc, Review, fmt.Sprintf("already has inputs; workflow %q was not merged into them", name))
 				case !in.IsZero():
-					in = repoSafe(in, func(detail string) { add(loc, Removed, detail) })
+					// The workflow's own notes say where each setting went;
+					// these say which ones this project could not keep.
+					in = repoSafe(in, func(detail string) { add(loc, Removed, "left out of this project's inputs: "+detail) })
+					if in.IsZero() {
+						add(loc, Review, fmt.Sprintf("workflow %q has nothing left that repo config may set; see the removed items", name))
+						break
+					}
 					in.applyTo(p)
 					add(loc, Converted, fmt.Sprintf("workflow %q replaced by %s", name, in.describe()))
 				default:

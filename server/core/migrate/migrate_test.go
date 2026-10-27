@@ -291,8 +291,8 @@ workflows:
 		removed = append(removed, n.Detail)
 	}
 	Equals(t, []string{
-		"inputs.env.HTTPS_PROXY cannot be set in repo config; set it in server-side config instead",
-		`inputs.extra_args.init cannot pass "-plugin-dir=./plugins" in repo config; set it in server-side config instead`,
+		"left out of this project's inputs: inputs.env.HTTPS_PROXY cannot be set in repo config; set it in server-side config instead",
+		`left out of this project's inputs: inputs.extra_args.init cannot pass "-plugin-dir=./plugins" in repo config; set it in server-side config instead`,
 	}, removed)
 	Assert(t, migrate.NeedsAttention(r.Notes), "denied inputs must make --strict fail")
 
@@ -301,4 +301,36 @@ workflows:
 	global := valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{AllowAllRepoSettings: true})
 	_, err = (&cfg.ParserValidator{}).ParseRepoCfg(dir, global, "github.com/org/repo", "")
 	Ok(t, err)
+}
+
+// When nothing allowed is left, the report says so instead of claiming the
+// workflow was replaced.
+func TestMigrateRepoConfigWithOnlyRepoDeniedInputs(t *testing.T) {
+	src := `version: 3
+projects:
+- dir: .
+  workflow: w
+workflows:
+  w:
+    plan:
+      steps:
+      - env:
+          name: HTTPS_PROXY
+          value: http://proxy.example.com
+      - init
+      - plan
+`
+	r, err := migrate.MigrateRepoConfig("atlantis.yaml", []byte(src), nil)
+	Ok(t, err)
+	Assert(t, !strings.Contains(string(r.Output), "inputs"), "no inputs expected:\n%s", r.Output)
+	var project []string
+	for _, n := range r.Notes {
+		if strings.HasPrefix(n.Location, "projects[0]") {
+			project = append(project, string(n.Action)+": "+n.Detail)
+		}
+	}
+	Equals(t, []string{
+		"removed: left out of this project's inputs: inputs.env.HTTPS_PROXY cannot be set in repo config; set it in server-side config instead",
+		`review: workflow "w" has nothing left that repo config may set; see the removed items`,
+	}, project)
 }
