@@ -151,6 +151,7 @@ var testFlags = map[string]any{
 	SSLCertFileFlag:                  "cert-file",
 	SSLKeyFileFlag:                   "key-file",
 	RestrictFileList:                 false,
+	TFDistributionFlag:               "terraform",
 	TFDownloadFlag:                   true,
 	TFDownloadURLFlag:                "https://my-hostname.com",
 	TFEHostnameFlag:                  "my-hostname",
@@ -1324,6 +1325,29 @@ func TestExecute_ValidateDefaultTFDistribution(t *testing.T) {
 			Ok(t, err)
 		}
 	}
+}
+
+func TestExecute_TFDistributionIsAnAliasForDefault(t *testing.T) {
+	c := setupWithDefaults(map[string]any{TFDistributionFlag: "opentofu"}, t)
+	Ok(t, c.Execute())
+	Equals(t, "opentofu", passedConfig.DefaultTFDistribution)
+}
+
+func TestExecute_RemovedFlagsFail(t *testing.T) {
+	c := setupWithDefaults(map[string]any{"redis-host": "redis", "locking-db-type": "redis"}, t)
+	ErrContains(t, "--locking-db-type, --redis-host: BoltDB and Redis support was removed", c.Execute())
+
+	// kubernetes is what the server does anyway.
+	c = setupWithDefaults(map[string]any{"locking-db-type": "kubernetes"}, t)
+	Ok(t, c.Execute())
+}
+
+// Kubernetes sets ATLANTIS_REDIS_PORT=tcp://... in every pod when the
+// namespace has a Service named atlantis-redis; that must not stop startup.
+func TestExecute_RemovedFlagsIgnoreServiceLinks(t *testing.T) {
+	t.Setenv("ATLANTIS_REDIS_PORT", "tcp://10.0.0.1:6379")
+	c := setupWithDefaults(map[string]any{}, t)
+	Ok(t, c.Execute())
 }
 
 func TestExecute_ValidateLanguage(t *testing.T) {

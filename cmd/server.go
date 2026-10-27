@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -152,6 +153,7 @@ const (
 	SSLCertFileFlag                  = "ssl-cert-file"
 	SSLKeyFileFlag                   = "ssl-key-file"
 	RestrictFileList                 = "restrict-file-list"
+	TFDistributionFlag               = "tf-distribution" // deprecated for DefaultTFDistributionFlag
 	TFDownloadFlag                   = "tf-download"
 	TFDownloadURLFlag                = "tf-download-url"
 	UseTFPluginCache                 = "use-tf-plugin-cache"
@@ -470,11 +472,11 @@ var stringFlags = map[string]stringFlag{
 		defaultValue: DefaultStatsNamespace,
 	},
 	SharePlanDirFlag: {
-		description:  "Path to directory to store local Terraform plan files. If unset, defaults to --" + DataDirFlag + ".",
+		description:  "[Deprecated: use --" + EnableExternalStoresFlag + " with external_stores.plan_store to share plans between replicas]. Path to directory to store local Terraform plan files. If unset, defaults to --" + DataDirFlag + ".",
 		defaultValue: "",
 	},
 	JobLogDirFlag: {
-		description: "Path to directory to persist job output in, so job logs survive a restart. With multiple replicas, point every replica at the same shared or network volume (e.g. NFS, EFS, or an S3 bucket mounted with append support)." +
+		description: "Path to directory to persist job output in, so job logs survive a restart. With multiple replicas each replica uses its own; to read completed logs from any replica, archive them with --" + EnableExternalStoresFlag + "." +
 			" If unset, defaults to the '" + logstore.DirName + "' subdirectory of --" + DataDirFlag + ".",
 		defaultValue: "",
 	},
@@ -498,6 +500,10 @@ var stringFlags = map[string]stringFlag{
 	},
 	SSLKeyFileFlag: {
 		description: fmt.Sprintf("File containing x509 private key matching --%s.", SSLCertFileFlag),
+	},
+	TFDistributionFlag: {
+		description: "[Deprecated for --default-tf-distribution].",
+		hidden:      true,
 	},
 	TFDownloadURLFlag: {
 		description:  "Base URL to download Terraform versions from.",
@@ -784,6 +790,23 @@ var ValidLogLevels = []string{"debug", "info", "warn", "error"}
 // automerge-method flag.
 var ValidAutomergeMethods = []string{"merge", "rebase", "squash"}
 
+// removedFlags were accepted by upstream Atlantis but do nothing here: locks
+// and pull status are stored in Kubernetes. They stay registered, hidden, so
+// a configuration that still sets them fails with a clear message instead of
+// "unknown flag", or, for environment variables and config files, instead of
+// being silently ignored.
+var removedFlags = map[string]any{
+	"locking-db-type":            "",
+	"redis-db":                   0,
+	"redis-host":                 "",
+	"redis-password":             "",
+	"redis-port":                 0,
+	"redis-tls-enabled":          false,
+	"redis-insecure-skip-verify": false,
+	"redis-username":             "",
+	"redis-cluster-addresses":    "",
+}
+
 type stringFlag struct {
 	description  string
 	defaultValue string
@@ -915,7 +938,46 @@ func (s *ServerCmd) Init() *cobra.Command {
 		s.Viper.BindPFlag(name, c.Flags().Lookup(name)) // nolint: errcheck
 	}
 
+	for name, zero := range removedFlags {
+		switch zero.(type) {
+		case int:
+			c.Flags().Int(name, 0, "Removed.")
+		case bool:
+			c.Flags().Bool(name, false, "Removed.")
+		default:
+			c.Flags().String(name, "", "Removed.")
+		}
+		c.Flags().MarkHidden(name)                      // nolint: errcheck
+		s.Viper.BindPFlag(name, c.Flags().Lookup(name)) // nolint: errcheck
+	}
+
 	return c
+}
+
+// removedFlagsError reports settings of flags this server no longer has.
+// --locking-db-type=kubernetes describes what the server does anyway, so it
+// is accepted. Service link variables are ignored as in
+// sanitizeKubernetesServiceLinks: a Service named "atlantis-redis" gives
+// every pod ATLANTIS_REDIS_PORT=tcp://..., which nobody set for Atlantis.
+func (s *ServerCmd) removedFlagsError() error {
+	var set []string
+	for _, name := range slices.Sorted(maps.Keys(removedFlags)) {
+		if !s.Viper.IsSet(name) {
+			continue
+		}
+		val := s.Viper.GetString(name)
+		if name == "locking-db-type" && val == "kubernetes" {
+			continue
+		}
+		if strings.HasPrefix(val, "tcp://") || strings.HasPrefix(val, "udp://") {
+			continue
+		}
+		set = append(set, "--"+name)
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: BoltDB and Redis support was removed; locks and pull status are stored in Kubernetes, so remove these settings", strings.Join(set, ", "))
 }
 
 func (s *ServerCmd) preRun() error {
@@ -958,6 +1020,9 @@ func (s *ServerCmd) run() error {
 	// right level.
 	s.Logger.SetLevel(userConfig.ToLogLevel())
 
+	if err := s.removedFlagsError(); err != nil {
+		return err
+	}
 	if err := s.validate(userConfig); err != nil {
 		return err
 	}
@@ -1081,6 +1146,9 @@ func (s *ServerCmd) setDefaults(c *server.UserConfig, v *viper.Viper) {
 	}
 	if c.Port == 0 {
 		c.Port = DefaultPort
+	}
+	if c.TFDistribution != "" && c.DefaultTFDistribution == "" {
+		c.DefaultTFDistribution = c.TFDistribution
 	}
 	if c.DefaultTFDistribution == "" {
 		c.DefaultTFDistribution = DefaultTFDistribution
@@ -1406,6 +1474,13 @@ func (s *ServerCmd) deprecationWarnings(userConfig *server.UserConfig) error {
 	//               deprecatedFlags = append(deprecatedFlags, SomeDeprecatedFlag)
 	//       }
 	//
+
+	if userConfig.TFDistribution != "" {
+		deprecatedFlags = append(deprecatedFlags, TFDistributionFlag)
+	}
+	if s.Viper.IsSet(SharePlanDirFlag) {
+		deprecatedFlags = append(deprecatedFlags, SharePlanDirFlag)
+	}
 
 	if len(deprecatedFlags) > 0 {
 		warning := "WARNING: "
