@@ -259,3 +259,78 @@ workflows:
 	_, err = (&cfg.ParserValidator{}).ParseGlobalCfg(writeTemp(t, r.Output), valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{}))
 	Ok(t, err)
 }
+
+// Settings the server refuses in repo config are left out of a migrated
+// atlantis.yaml and reported, so the result still loads.
+func TestMigrateRepoConfigLeavesOutRepoDeniedInputs(t *testing.T) {
+	src := `version: 3
+projects:
+- dir: .
+  workflow: w
+workflows:
+  w:
+    plan:
+      steps:
+      - env:
+          name: AWS_PROFILE
+          value: prod
+      - env:
+          name: HTTPS_PROXY
+          value: http://proxy.example.com
+      - init:
+          extra_args: [-upgrade, -plugin-dir=./plugins]
+      - plan
+`
+	r, err := migrate.MigrateRepoConfig("atlantis.yaml", []byte(src), nil)
+	Ok(t, err)
+	out := string(r.Output)
+	Assert(t, strings.Contains(out, "AWS_PROFILE") && strings.Contains(out, "-upgrade"), "allowed inputs must be kept:\n%s", out)
+	Assert(t, !strings.Contains(out, "HTTPS_PROXY") && !strings.Contains(out, "plugin-dir"), "denied inputs must be left out:\n%s", out)
+	var removed []string
+	for _, n := range notesWith(r.Notes, migrate.Removed) {
+		removed = append(removed, n.Detail)
+	}
+	Equals(t, []string{
+		"left out of this project's inputs: inputs.env.HTTPS_PROXY cannot be set in repo config; set it in server-side config instead",
+		`left out of this project's inputs: inputs.extra_args.init cannot pass "-plugin-dir=./plugins" in repo config; set it in server-side config instead`,
+	}, removed)
+	Assert(t, migrate.NeedsAttention(r.Notes), "denied inputs must make --strict fail")
+
+	dir := t.TempDir()
+	Ok(t, os.WriteFile(filepath.Join(dir, "atlantis.yaml"), r.Output, 0o600))
+	global := valid.NewGlobalCfgFromArgs(valid.GlobalCfgArgs{AllowAllRepoSettings: true})
+	_, err = (&cfg.ParserValidator{}).ParseRepoCfg(dir, global, "github.com/org/repo", "")
+	Ok(t, err)
+}
+
+// When nothing allowed is left, the report says so instead of claiming the
+// workflow was replaced.
+func TestMigrateRepoConfigWithOnlyRepoDeniedInputs(t *testing.T) {
+	src := `version: 3
+projects:
+- dir: .
+  workflow: w
+workflows:
+  w:
+    plan:
+      steps:
+      - env:
+          name: HTTPS_PROXY
+          value: http://proxy.example.com
+      - init
+      - plan
+`
+	r, err := migrate.MigrateRepoConfig("atlantis.yaml", []byte(src), nil)
+	Ok(t, err)
+	Assert(t, !strings.Contains(string(r.Output), "inputs"), "no inputs expected:\n%s", r.Output)
+	var project []string
+	for _, n := range r.Notes {
+		if strings.HasPrefix(n.Location, "projects[0]") {
+			project = append(project, string(n.Action)+": "+n.Detail)
+		}
+	}
+	Equals(t, []string{
+		"removed: left out of this project's inputs: inputs.env.HTTPS_PROXY cannot be set in repo config; set it in server-side config instead",
+		`review: workflow "w" has nothing left that repo config may set; see the removed items`,
+	}, project)
+}
