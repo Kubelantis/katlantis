@@ -1343,6 +1343,10 @@ Only supported on GitLab
 
 ### `--plan-risk-enabled`
 
+::: warning Experimental
+Plan risk scoring is experimental: its configuration and behaviour may change in a later release without a deprecation period.
+:::
+
 ```bash
 atlantis server --plan-risk-enabled
 # or
