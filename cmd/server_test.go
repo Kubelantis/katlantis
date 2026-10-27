@@ -1327,6 +1327,21 @@ func TestExecute_ValidateDefaultTFDistribution(t *testing.T) {
 	}
 }
 
+func TestExecute_TFDistributionIsAnAliasForDefault(t *testing.T) {
+	c := setupWithDefaults(map[string]any{TFDistributionFlag: "opentofu"}, t)
+	Ok(t, c.Execute())
+	Equals(t, "opentofu", passedConfig.DefaultTFDistribution)
+}
+
+func TestExecute_RemovedFlagsFail(t *testing.T) {
+	c := setupWithDefaults(map[string]any{"redis-host": "redis", "locking-db-type": "redis"}, t)
+	ErrContains(t, "--locking-db-type, --redis-host: BoltDB and Redis support was removed", c.Execute())
+
+	// kubernetes is what the server does anyway.
+	c = setupWithDefaults(map[string]any{"locking-db-type": "kubernetes"}, t)
+	Ok(t, c.Execute())
+}
+
 func TestExecute_ValidateLanguage(t *testing.T) {
 	cases := []struct {
 		description string

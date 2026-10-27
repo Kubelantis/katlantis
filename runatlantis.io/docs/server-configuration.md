@@ -717,6 +717,10 @@ ATLANTIS_ENABLE_PROFILING_API=true
 
 Enable [`net/http/pprof`](https://pkg.go.dev/net/http/pprof) endpoints for [continuous profiling](https://grafana.com/docs/pyroscope/latest/introduction/continuous-profiling/) of resources used by the server. See [profiling Go programs](https://go.dev/blog/pprof) for more information.
 
+The endpoints are served under `/debug/pprof` on the main port, which an Ingress
+usually exposes. On Kubernetes, enable this only behind an Ingress that blocks
+`/debug/pprof`, or reach the pod with `kubectl port-forward`.
+
 ### `--enable-regexp-cmd` <Badge text="v0.17.0" type="info"/>
 
 ```bash
@@ -1162,19 +1166,13 @@ seconds, and once more when the job finishes, so a slow volume never holds up
 live output. If Atlantis is killed mid-job, at most the last couple of seconds
 of that job's output are lost.
 
-When running multiple Atlantis replicas, point every replica at the same
-shared or network volume (for example NFS, Amazon EFS, Azure Files, or an S3
-bucket mounted as a filesystem). Any replica can then show the log of a job
-another replica ran, and closing a pull request deletes its logs for all of
-them. Without a shared volume, each replica only has the logs of the jobs it
-ran itself. Following a job's output live still works only on the replica
-running it; other replicas show its output up to the last flush, a couple of
-seconds behind.
-
-The volume must support appending to an existing file, because output is
-added to a job's file as the job runs. NFS, EFS and Azure Files do. For S3, use a mount
-that supports appends, such as s3fs; Mountpoint for Amazon S3 does not
-support appending to files in general-purpose buckets.
+With several replicas, each replica writes the logs of the jobs it runs to
+its own volume (the Helm chart gives every pod its own). Opening a job's page
+through any replica works: the request is forwarded to the replica that ran
+the job, live output included. To keep completed logs readable after that
+replica is gone, archive them to object storage with
+[`--enable-external-stores`](#enable-external-stores) and
+`external_stores.log_store`; a shared volume is not needed.
 
 ### `--kubernetes-identity`
 
@@ -1488,6 +1486,12 @@ atlantis server --share-plan-dir="path/to/local/plan/dir"
 ATLANTIS_SHARE_PLAN_DIR="path/to/local/plan/dir"
 ```
 
+<Badge text="Deprecated" type="warn"/>
+Deprecated: with several replicas, store plans in object storage with
+[`--enable-external-stores`](#enable-external-stores) and
+`external_stores.plan_store` instead of a shared directory. Each pod in the
+Helm chart has its own volume.
+
 Directory where Atlantis will store local Terraform plan files. If unset, this defaults to the resolved `--data-dir` value so existing installations keep the same on-disk layout. When set to a different directory, checked out repositories remain under `--data-dir` and generated `.tfplan` files use the same repo, pull request, workspace, and project path layout under `--share-plan-dir`.
 
 ### `--silence-allowlist-errors` <Badge text="v0.28.0+" type="info"/>
@@ -1583,6 +1587,12 @@ ATLANTIS_SSL_CERT_FILE="/etc/ssl/certs/my-cert.crt"
 File containing x509 Certificate used for serving HTTPS.
 If the cert is signed by a CA, the file should be the concatenation
 of the server's certificate, any intermediates, and the CA's certificate.
+
+On Kubernetes, TLS is usually terminated at the Ingress and these flags are not
+needed. Set them when Atlantis itself must serve HTTPS, for example behind a
+TCP passthrough load balancer. They do not apply to the internal listener on
+`--cluster-port`, which serves plain HTTP inside the cluster and authenticates
+with `--cluster-token`.
 
 ### `--ssl-key-file` <Badge text="v0.2.4+" type="info"/>
 
@@ -1758,6 +1768,9 @@ ATLANTIS_WEB_BASIC_AUTH=true
 ```
 
 Enable Basic Authentication on the Atlantis web service.
+
+On Kubernetes, authentication can instead be added at the Ingress, if your
+controller supports it.
 
 ### `--web-password` <Badge text="v0.1.0+" type="info"/>
 
