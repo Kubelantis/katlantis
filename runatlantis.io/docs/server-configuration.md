@@ -1604,6 +1604,11 @@ ATLANTIS_STATS_NAMESPACE="myatlantis"
 
 Namespace for emitting stats/metrics. See [stats](stats.md) section.
 
+### `--tf-distribution` <Badge text="v0.24.0+" type="info"/>
+
+  <Badge text="Deprecated" type="warn"/>
+  Deprecated for `--default-tf-distribution`.
+
 ### `--tf-download` <Badge text="v0.18.0+" type="info"/>
 
 ```bash
