@@ -23,7 +23,7 @@ func TestDeleteLock_LockerErr(t *testing.T) {
 	logger := logging.NewNoopLogger(t)
 	ctrl := gomock.NewController(t)
 	l := lockmocks.NewMockLocker(ctrl)
-	l.EXPECT().Unlock("id").Return(nil, errors.New("err"))
+	l.EXPECT().GetLock("id").Return(nil, errors.New("err"))
 	dlc := events.DefaultDeleteLockCommand{Locker: l}
 	_, err := dlc.DeleteLock(logger, "id")
 	ErrEquals(t, "err", err)
@@ -34,7 +34,7 @@ func TestDeleteLock_None(t *testing.T) {
 	logger := logging.NewNoopLogger(t)
 	ctrl := gomock.NewController(t)
 	l := lockmocks.NewMockLocker(ctrl)
-	l.EXPECT().Unlock("id").Return(nil, nil)
+	l.EXPECT().GetLock("id").Return(nil, nil)
 	dlc := events.DefaultDeleteLockCommand{Locker: l}
 	lock, err := dlc.DeleteLock(logger, "id")
 	Ok(t, err)
@@ -53,14 +53,16 @@ func TestDeleteLock_Success(t *testing.T) {
 	}
 	ctrl := gomock.NewController(t)
 	l := lockmocks.NewMockLocker(ctrl)
-	l.EXPECT().Unlock("id").Return(&models.ProjectLock{
+	lock := &models.ProjectLock{
 		Pull:      pull,
 		Workspace: workspace,
 		Project: models.Project{
 			Path:         path,
 			RepoFullName: pull.BaseRepo.FullName,
 		},
-	}, nil)
+	}
+	l.EXPECT().GetLock("id").Return(lock, nil)
+	l.EXPECT().UnlockIfOwnedByPull(lock.Project, workspace, pull.Num).Return(lock, nil)
 	workingDir := events.NewMockWorkingDir()
 	workingDirLocker := events.NewDefaultWorkingDirLocker()
 	db := kubedbtest.New(t)
@@ -78,6 +80,88 @@ func TestDeleteLock_Success(t *testing.T) {
 	Assert(t, lock != nil, "lock was nil")
 	workingDir.VerifyWasCalledOnce().DeletePlan(Any[logging.SimpleLogging](), Eq(pull.BaseRepo), Eq(pull), Eq(workspace),
 		Eq(path), Eq(projectName))
+}
+
+// The discard is recorded where every replica sees it before the lock is
+// released, so a plan file left on another replica or in a plan store cannot
+// be applied once the lock is free.
+func TestDeleteLock_RecordsDiscardBeforeUnlocking(t *testing.T) {
+	logger := logging.NewNoopLogger(t)
+	RegisterMockTestingT(t)
+	ctrl := gomock.NewController(t)
+	l := lockmocks.NewMockLocker(ctrl)
+	workingDir := events.NewMockWorkingDir()
+	db := kubedbtest.New(t)
+	t.Cleanup(func() { db.Close() })
+
+	pull := models.PullRequest{
+		BaseRepo:   models.Repo{FullName: "owner/repo", Owner: "owner", Name: "repo", VCSHost: models.VCSHost{Hostname: "github.com"}},
+		Num:        2,
+		HeadCommit: "abc",
+	}
+	_, err := db.UpdatePullWithResults(pull, []command.ProjectResult{{
+		Command:              command.Plan,
+		RepoRelDir:           "dir1",
+		Workspace:            "default",
+		ProjectCommandOutput: command.ProjectCommandOutput{PlanSuccess: &models.PlanSuccess{TerraformOutput: "Plan: 1 to add"}},
+	}})
+	Ok(t, err)
+	lock := &models.ProjectLock{Pull: pull, Workspace: "default", Project: models.Project{Path: "dir1", RepoFullName: "owner/repo"}}
+
+	l.EXPECT().GetLock("id").Return(lock, nil)
+	l.EXPECT().UnlockIfOwnedByPull(lock.Project, "default", 2).DoAndReturn(func(models.Project, string, int) (*models.ProjectLock, error) {
+		status, err := db.GetPullStatus(pull)
+		Ok(t, err)
+		Equals(t, models.DiscardedPlanStatus, status.Projects[0].Status)
+		return lock, nil
+	})
+	dlc := events.DefaultDeleteLockCommand{Locker: l, WorkingDir: workingDir, Database: db}
+
+	got, err := dlc.DeleteLock(logger, "id")
+	Ok(t, err)
+	Equals(t, lock, got)
+	workingDir.VerifyWasCalledOnce().DeletePlan(Any[logging.SimpleLogging](), Eq(pull.BaseRepo), Eq(pull), Eq("default"), Eq("dir1"), Eq(""))
+}
+
+// If the discard cannot be recorded, the lock is kept and nothing is deleted:
+// releasing it would leave the plan applicable while reporting it discarded.
+func TestDeleteLock_KeepsLockWhenDiscardFails(t *testing.T) {
+	logger := logging.NewNoopLogger(t)
+	RegisterMockTestingT(t)
+	ctrl := gomock.NewController(t)
+	l := lockmocks.NewMockLocker(ctrl)
+	workingDir := events.NewMockWorkingDir()
+	db := kubedbtest.New(t)
+	db.Close() // every write fails
+
+	pull := models.PullRequest{BaseRepo: models.Repo{FullName: "owner/repo", VCSHost: models.VCSHost{Hostname: "github.com"}}, Num: 2}
+	l.EXPECT().GetLock("id").Return(&models.ProjectLock{Pull: pull, Workspace: "default", Project: models.Project{Path: "dir1", RepoFullName: "owner/repo"}}, nil)
+	dlc := events.DefaultDeleteLockCommand{Locker: l, WorkingDir: workingDir, Database: db}
+
+	_, err := dlc.DeleteLock(logger, "id")
+	ErrContains(t, "the lock was kept", err)
+	workingDir.VerifyWasCalled(Never()).DeletePlan(Any[logging.SimpleLogging](), Any[models.Repo](), Any[models.PullRequest](), Any[string](), Any[string](), Any[string]())
+}
+
+// A lock with no recorded plan has nothing to discard; it is still released.
+func TestDeleteLock_NoPlanStatus(t *testing.T) {
+	logger := logging.NewNoopLogger(t)
+	RegisterMockTestingT(t)
+	ctrl := gomock.NewController(t)
+	l := lockmocks.NewMockLocker(ctrl)
+	workingDir := events.NewMockWorkingDir()
+	db := kubedbtest.New(t)
+	t.Cleanup(func() { db.Close() })
+
+	pull := models.PullRequest{BaseRepo: models.Repo{FullName: "owner/repo", VCSHost: models.VCSHost{Hostname: "github.com"}}, Num: 2}
+	lock := &models.ProjectLock{Pull: pull, Workspace: "default", Project: models.Project{Path: "dir1", RepoFullName: "owner/repo"}}
+	l.EXPECT().GetLock("id").Return(lock, nil)
+	l.EXPECT().UnlockIfOwnedByPull(lock.Project, "default", 2).Return(lock, nil)
+	dlc := events.DefaultDeleteLockCommand{Locker: l, WorkingDir: workingDir, Database: db}
+
+	got, err := dlc.DeleteLock(logger, "id")
+	Ok(t, err)
+	Equals(t, lock, got)
 }
 
 func TestDeleteLocksByPull_LockerErr(t *testing.T) {

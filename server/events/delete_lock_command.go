@@ -5,6 +5,7 @@ package events
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/runatlantis/atlantis/server/core/db"
@@ -31,14 +32,37 @@ type DefaultDeleteLockCommand struct {
 	PlanStore        planstore.PlanStore
 }
 
-// DeleteLock handles deleting the lock at id
+// DeleteLock discards the plan of the lock at id and releases the lock.
+// The discard is recorded in the shared database first: the plan file may be
+// on another replica or in a plan store, where deleting files here cannot
+// reach it, and only the discarded status stops a later apply. If it cannot
+// be recorded nothing is changed and an error is returned, so the caller is
+// never told the plan was discarded when it is still applicable, and can
+// retry.
 func (l *DefaultDeleteLockCommand) DeleteLock(logger logging.SimpleLogging, id string) (*models.ProjectLock, error) {
-	lock, err := l.Locker.Unlock(id)
+	lock, err := l.Locker.GetLock(id)
 	if err != nil {
 		return nil, err
 	}
 	if lock == nil {
 		return nil, nil
+	}
+
+	// Locks from before BaseRepo was recorded cannot be matched to a status.
+	if l.Database != nil && lock.Pull.BaseRepo != (models.Repo{}) {
+		err := l.Database.UpdateProjectStatus(lock.Pull, lock.Workspace, lock.Project.Path, lock.Project.ProjectName, models.DiscardedPlanStatus)
+		switch {
+		case errors.Is(err, db.ErrProjectNotFound):
+			logger.Debug("no plan status to discard for dir %q workspace %q project %q", lock.Project.Path, lock.Workspace, lock.Project.ProjectName)
+		case err != nil:
+			return nil, fmt.Errorf("recording the plan as discarded: %w; the lock was kept, try again", err)
+		}
+	}
+
+	// Release the lock only if it still belongs to the same pull: it may have
+	// been released and taken by another pull since it was read.
+	if _, err := l.Locker.UnlockIfOwnedByPull(lock.Project, lock.Workspace, lock.Pull.Num); err != nil {
+		return nil, err
 	}
 
 	removeErr := l.WorkingDir.DeletePlan(logger, lock.Pull.BaseRepo, lock.Pull, lock.Workspace, lock.Project.Path, lock.Project.ProjectName)

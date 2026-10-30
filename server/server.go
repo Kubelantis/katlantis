@@ -1042,7 +1042,6 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		LockDetailTemplate: web_templates.LockTemplate,
 		WorkingDir:         workingDir,
 		WorkingDirLocker:   workingDirLocker,
-		Database:           database,
 		DeleteLockCommand:  deleteLockCommand,
 	}
 

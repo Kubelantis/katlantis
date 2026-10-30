@@ -62,6 +62,8 @@ to delete the lock.
 
 Once a plan is discarded, you'll need to run `plan` again prior to running `apply` when you go back to that pull request.
 
+**Discard Plan and Unlock** records the discard before it deletes the lock, so every replica refuses to apply that plan. If Atlantis cannot record it, for example because the Kubernetes API is unreachable, the lock is kept and the page shows an error; try again once the API is reachable.
+
 ## Relationship to Terraform State Locking
 
 Atlantis does not conflict with [Terraform State Locking](https://developer.hashicorp.com/terraform/language/state/locking). Under the hood, all
