@@ -171,8 +171,37 @@ func TestUnlockByPullKeepsLeaseWhileCommandsRun(t *testing.T) {
 	unlock()
 }
 
+// grantingLocker is a local WorkingDirLocker that always grants, so a test
+// can exercise the lease alone.
+type grantingLocker struct{}
+
+func (grantingLocker) TryLockPull(string, int, command.Name, events.WorkingDirLockMetadata) (func(), error) {
+	return func() {}, nil
+}
+
+func (grantingLocker) TryLock(string, int, string, string, string, command.Name, events.WorkingDirLockMetadata) (func(), error) {
+	return func() {}, nil
+}
+
+func (grantingLocker) HasCommandLock(string, int, command.Name) bool { return false }
+
+func (grantingLocker) UnlockByPull(string, int) {}
+
+// A release that deletes the lease must not delete a lease the same replica
+// takes again meanwhile. The second acquisition may run before, during or
+// after the first one's release; in every order the lease must stay held.
+// The local locker always grants: with the real one, a second acquisition
+// that runs before the release is refused locally, which is correct but not
+// what this test is about.
 func TestReleaseThenReacquireKeepsLease(t *testing.T) {
-	r := replicas(t, 2)
+	c, ns := kubetest.Client(t)
+	var r []*pulllock.Locker
+	for _, id := range []string{"a", "b"} {
+		r = append(r, pulllock.New(pulllock.Config{
+			Local: grantingLocker{}, Client: c, Namespace: ns, Identity: id,
+			Duration: 3 * time.Second, Logger: logging.NewNoopLogger(t),
+		}))
+	}
 	for i := range 20 {
 		first, err := r[0].TryLockPull("org/repo", 1, command.Plan, events.WorkingDirLockMetadata{})
 		Ok(t, err)
