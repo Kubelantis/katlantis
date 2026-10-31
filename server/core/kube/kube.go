@@ -7,6 +7,7 @@
 package kube
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -40,6 +41,9 @@ const (
 	AnnotationData = "atlantis.runatlantis.io/data"
 	// AnnotationAddress holds a member's reachable HTTP address.
 	AnnotationAddress = "atlantis.runatlantis.io/address"
+	// AnnotationIncarnation holds the incarnation of the process holding a
+	// Lease; see NewIncarnation.
+	AnnotationIncarnation = "atlantis.runatlantis.io/incarnation"
 
 	TypeProjectLock = "project-lock"
 	TypeCommandLock = "command-lock"
@@ -111,6 +115,17 @@ func ResolveIdentity(explicit string) (string, error) {
 		return n, nil
 	}
 	return os.Hostname()
+}
+
+// NewIncarnation returns a random ID for one run of a process. A replica's
+// identity (its pod name) is reused when the pod restarts, and two processes
+// can run under one name (a force-deleted pod that is still running, or the
+// same --kubernetes-identity on every replica). Leases record the
+// incarnation as well as the identity so these processes never share one.
+func NewIncarnation() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b) // crypto/rand never fails on supported platforms
+	return hex.EncodeToString(b)
 }
 
 // Hash returns a DNS-label-safe digest of s.
